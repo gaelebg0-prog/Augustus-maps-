@@ -1,0 +1,154 @@
+#include "map.h"
+
+#include "map/routing.h"
+
+#include "core/calc.h"
+#include "core/config.h"
+#include "map/grid.h"
+#include "scenario/data.h"
+
+void scenario_map_init(void)
+{
+    map_grid_init(scenario.map.width, scenario.map.height,
+                  scenario.map.grid_start, scenario.map.grid_border_size);
+}
+
+/* Tailles proposees par l'option "taille de la carte" des parametres.
+ * L'index dans cette table est stocke dans la configuration
+ * (CONFIG_MAP_EXPANDED_SIZE). 162 correspond a la carte d'origine. */
+const int map_expand_size_options[MAP_EXPAND_SIZE_COUNT] = {
+    162, 192, 256, 320, 384, 512, 640, 768, 1024
+};
+
+int scenario_map_expand(void)
+{
+    int index = config_get(CONFIG_MAP_EXPANDED_SIZE);
+    if (index < 0) {
+        index = 0;
+    }
+    if (index >= MAP_EXPAND_SIZE_COUNT) {
+        index = MAP_EXPAND_SIZE_COUNT - 1;
+    }
+    int size = map_expand_size_options[index];
+    if (!map_grid_expand(size)) {
+        return 0;
+    }
+    scenario.map.width = size;
+    scenario.map.height = size;
+    scenario.map.grid_border_size = 0;
+    scenario.map.grid_start = 0;
+    return 1;
+}
+
+int scenario_map_size(void)
+{
+    return scenario.map.width;
+}
+
+void scenario_map_init_entry_exit(void)
+{
+    if (scenario.entry_point.x == -1 || scenario.entry_point.y == -1) {
+        scenario.entry_point.x = scenario.map.width - 1;
+        scenario.entry_point.y = scenario.map.height / 2;
+    }
+    if (scenario.exit_point.x == -1 || scenario.exit_point.y == -1) {
+        scenario.exit_point.x = scenario.entry_point.x;
+        scenario.exit_point.y = scenario.entry_point.y;
+    }
+}
+
+map_point scenario_map_entry(void)
+{
+    map_point point = {scenario.entry_point.x, scenario.entry_point.y};
+    return point;
+}
+
+map_point scenario_map_exit(void)
+{
+    map_point point = {scenario.exit_point.x, scenario.exit_point.y};
+    return point;
+}
+
+int scenario_map_has_river_entry(void)
+{
+    return scenario.river_entry_point.x != -1 && scenario.river_entry_point.y != -1;
+}
+
+map_point scenario_map_river_entry(void)
+{
+    map_point point = {scenario.river_entry_point.x, scenario.river_entry_point.y};
+    return point;
+}
+
+int scenario_map_has_river_exit(void)
+{
+    return scenario.river_exit_point.x != -1 && scenario.river_exit_point.y != -1;
+}
+
+map_point scenario_map_river_exit(void)
+{
+    map_point point = {scenario.river_exit_point.x, scenario.river_exit_point.y};
+    return point;
+}
+
+void scenario_map_foreach_herd_point(void (*callback)(int x, int y))
+{
+    for (int i = 0; i < MAX_HERD_POINTS; i++) {
+        if (scenario.herd_points[i].x > 0) {
+            callback(scenario.herd_points[i].x, scenario.herd_points[i].y);
+        }
+    }
+}
+
+void scenario_map_foreach_fishing_point(void (*callback)(int x, int y))
+{
+    for (int i = 0; i < MAX_FISH_POINTS; i++) {
+        if (scenario.fishing_points[i].x > 0) {
+            callback(scenario.fishing_points[i].x, scenario.fishing_points[i].y);
+        }
+    }
+}
+
+int scenario_map_closest_fishing_point(int x, int y, map_point *fish)
+{
+    int num_fishing_spots = 0;
+    for (int i = 0; i < MAX_FISH_POINTS; i++) {
+        if (scenario.fishing_points[i].x > 0) {
+            num_fishing_spots++;
+        }
+    }
+    if (num_fishing_spots <= 0) {
+        return 0;
+    }
+    map_routing_calculate_distances_water_boat(x, y);
+    int min_dist = 10000;
+    int min_fish_id = -1;
+    for (int i = 0; i < MAX_FISH_POINTS; i++) {
+        if (scenario.fishing_points[i].x <= 0) {
+            continue;
+        }
+        int offset = map_grid_offset(scenario.fishing_points[i].x, scenario.fishing_points[i].y);
+        int dist = map_routing_distance(offset);
+        if (dist <= 0) {
+            continue;
+        }
+        if (dist < min_dist) {
+            min_dist = dist;
+            min_fish_id = i;
+        }
+    }
+    if (min_fish_id >= 0) {
+        map_point_store_result(
+            scenario.fishing_points[min_fish_id].x,
+            scenario.fishing_points[min_fish_id].y,
+            fish
+        );
+        return 1;
+    }
+    return 0;
+}
+
+int scenario_map_has_flotsam(void)
+{
+    return scenario.flotsam_enabled;
+}
