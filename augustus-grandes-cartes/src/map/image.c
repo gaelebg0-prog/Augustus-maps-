@@ -1,0 +1,171 @@
+#include "image.h"
+
+#include "building/image.h"
+#include "building/industry.h"
+#include "building/properties.h"
+#include "core/calc.h"
+#include "core/image.h"
+#include "core/image_group.h"
+#include "map/building_tiles.h"
+#include "map/grid.h"
+#include "map/orientation.h"
+#include "map/tiles.h"
+
+static grid_u32 images;
+MAP_GRID_REGISTER(images, u32);
+static grid_u32 images_backup;
+
+MAP_GRID_REGISTER(images_backup, u32);
+// Marshland and Beach are drawn as an OVERLAY on top of the native terrain tile (which keeps its own image),
+// so their image ids are stored in separate grids rather than overwriting the terrain image. 0 = no
+// overlay on the tile. These grids are derived from the TERRAIN_MARSHLAND and TERRAIN_BEACH flags and recomputed
+// on load/rotation/climate change, so they are not part of the save format.
+static grid_u32 marsh_images;
+MAP_GRID_REGISTER(marsh_images, u32);
+static grid_u32 marsh_images_backup;
+MAP_GRID_REGISTER(marsh_images_backup, u32);
+static grid_u32 beach_images;
+MAP_GRID_REGISTER(beach_images, u32);
+static grid_u32 beach_images_backup;
+
+MAP_GRID_REGISTER(beach_images_backup, u32);
+unsigned int map_marsh_image_at(int grid_offset)
+{
+    return marsh_images.items[grid_offset];
+}
+
+void map_marsh_image_set(int grid_offset, int image_id)
+{
+    marsh_images.items[grid_offset] = image_id;
+}
+
+void map_marsh_image_backup(void)
+{
+    map_grid_copy_u32(marsh_images.items, marsh_images_backup.items);
+}
+
+void map_marsh_image_restore(void)
+{
+    map_grid_copy_u32(marsh_images_backup.items, marsh_images.items);
+}
+
+void map_marsh_image_clear(void)
+{
+    map_grid_clear_u32(marsh_images.items);
+}
+
+unsigned int map_beach_image_at(int grid_offset)
+{
+    return beach_images.items[grid_offset];
+}
+
+void map_beach_image_set(int grid_offset, int image_id)
+{
+    beach_images.items[grid_offset] = image_id;
+}
+
+void map_beach_image_backup(void)
+{
+    map_grid_copy_u32(beach_images.items, beach_images_backup.items);
+}
+
+void map_beach_image_restore(void)
+{
+    map_grid_copy_u32(beach_images_backup.items, beach_images.items);
+}
+
+void map_beach_image_clear(void)
+{
+    map_grid_clear_u32(beach_images.items);
+}
+
+unsigned int map_image_at(int grid_offset)
+{
+    return map_grid_is_valid_offset(grid_offset) ? images.items[grid_offset] : 0;
+}
+
+/* Les grilles sont sur le tas : ecrire a un offset hors limites corrompt la
+ * memoire du processus. Les offsets arrivent souvent d'un calcul de voisinage. */
+void map_image_set(int grid_offset, int image_id)
+{
+    if (map_grid_is_valid_offset(grid_offset)) {
+        images.items[grid_offset] = image_id;
+    }
+}
+
+void map_image_set_with_backup(int grid_offset, int image_id)
+{
+    images.items[grid_offset] = image_id;
+    images_backup.items[grid_offset] = image_id;
+}
+
+void map_image_backup(void)
+{
+    map_grid_copy_u32(images.items, images_backup.items);
+}
+
+void map_image_restore(void)
+{
+    map_grid_copy_u32(images_backup.items, images.items);
+}
+
+void map_image_restore_at(int grid_offset)
+{
+    images.items[grid_offset] = images_backup.items[grid_offset];
+}
+
+void map_image_clear(void)
+{
+    map_grid_clear_u32(images.items);
+}
+
+void map_image_init_edges(void)
+{
+    int width, height;
+    map_grid_size(&width, &height);
+    for (int x = 1; x < width; x++) {
+        images.items[map_grid_offset(x, height)] = 1;
+    }
+    for (int y = 1; y < height; y++) {
+        images.items[map_grid_offset(width, y)] = 2;
+    }
+    images.items[map_grid_offset(0, height)] = 3;
+    images.items[map_grid_offset(width, 0)] = 4;
+    images.items[map_grid_offset(width, height)] = 5;
+}
+
+void map_image_update_all(void)
+{
+    map_tiles_update_all();
+    for (int i = 1; i < building_count(); i++) {
+        building *b = building_get(i);
+        if (b->state != BUILDING_STATE_IN_USE && b->state != BUILDING_STATE_MOTHBALLED && b->state != BUILDING_STATE_CREATED) {
+            continue;
+        }
+        if (building_is_farm(b->type)) {
+            map_building_tiles_add_farm(b->id, b->x, b->y, building_image_get_base_farm_crop(b->type),
+                calc_percentage(b->data.industry.progress, building_industry_get_max_progress(b)));
+            continue;
+        }
+        if (b->type == BUILDING_SHIP_BRIDGE || b->type == BUILDING_LOW_BRIDGE || building_properties_for_type(b->type)->shared) {
+            continue; //bridges are drawn as a part of terrain drawing, and their image shouldnt be fetched. Fetching shared building image will cause a black tile(0,0) to appear on the map.
+        }
+        int image_id = building_image_get(b);
+
+        for (int dy = 0; dy < b->size; dy++) {
+            for (int dx = 0; dx < b->size; dx++) {
+                map_image_set(map_grid_offset(b->x + dx, b->y + dy), image_id);
+            }
+        }
+    }
+}
+
+void map_image_save_state_legacy(buffer *buf)
+{
+    map_grid_save_state_u32_to_u16(images.items, buf);
+}
+
+void map_image_load_state_legacy(buffer *buf)
+{
+    map_grid_load_state_u16_to_u32(images.items, buf);
+}

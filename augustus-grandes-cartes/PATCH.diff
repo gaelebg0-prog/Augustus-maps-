@@ -1,0 +1,4088 @@
+diff --git a/src/building/building.h b/src/building/building.h
+index 8d1953c..56e0f82 100644
+--- a/src/building/building.h
++++ b/src/building/building.h
+@@ -43,9 +43,9 @@ typedef struct building {
+     unsigned char size;
+     unsigned char house_is_merged;
+     unsigned char house_size;
+-    unsigned char x; // these are not grid coordinates but image coordinates
+-    unsigned char y;
+-    short grid_offset;
++    short x; // these are not grid coordinates but image coordinates
++    short y;
++    int grid_offset;
+     building_type type;
+     union {
+         short house_level;
+@@ -65,8 +65,8 @@ typedef struct building {
+     short distance_from_entry;
+     short house_highest_population;
+     short house_unreachable_ticks;
+-    unsigned char road_access_x;
+-    unsigned char road_access_y;
++    short road_access_x;
++    short road_access_y;
+     unsigned int figure_id;
+     unsigned int figure_id2; // labor seeker or market supplier
+     unsigned int immigrant_figure_id;
+diff --git a/src/building/house.c b/src/building/house.c
+index 2b754eb..71bc7c7 100644
+--- a/src/building/house.c
++++ b/src/building/house.c
+@@ -18,7 +18,7 @@
+ 
+ #define MAX_DIR 4
+ 
+-#define OFFSET(x,y) (x + GRID_SIZE * y)
++#define OFFSET(x,y) (x + MAP_GRID_STATIC_STRIDE * y)
+ 
+ static const int HOUSE_TILE_OFFSETS[] = {
+     OFFSET(0,0), OFFSET(1,0), OFFSET(0,1), OFFSET(1,1), // 2x2
+@@ -30,7 +30,7 @@ static const struct {
+     int x;
+     int y;
+     int offset;
+-} EXPAND_DIRECTION_DELTA[MAX_DIR] = { {0, 0, 0}, {-1, -1, -GRID_SIZE - 1}, {-1, 0, -1}, {0, -1, -GRID_SIZE} };
++} EXPAND_DIRECTION_DELTA[MAX_DIR] = { {0, 0, 0}, {-1, -1, -MAP_GRID_STATIC_STRIDE - 1}, {-1, 0, -1}, {0, -1, -MAP_GRID_STATIC_STRIDE} };
+ 
+ static struct {
+     int x;
+@@ -93,7 +93,7 @@ static void prepare_for_merge(unsigned int building_id, int num_tiles)
+     merge_data.sentiment = 0;
+     int grid_offset = map_grid_offset(merge_data.x, merge_data.y);
+     for (int i = 0; i < num_tiles; i++) {
+-        int house_offset = grid_offset + HOUSE_TILE_OFFSETS[i];
++        int house_offset = map_grid_add_legacy_offset(grid_offset, HOUSE_TILE_OFFSETS[i]);
+         if (map_terrain_is(house_offset, TERRAIN_BUILDING)) {
+             building *house = building_get(map_building_at(house_offset));
+             if (house->id != building_id && house->house_size) {
+@@ -153,7 +153,7 @@ void building_house_merge(building *house)
+     }
+     int num_house_tiles = 0;
+     for (int i = 0; i < 4; i++) {
+-        int tile_offset = house->grid_offset + HOUSE_TILE_OFFSETS[i];
++        int tile_offset = map_grid_add_legacy_offset(house->grid_offset, HOUSE_TILE_OFFSETS[i]);
+         if (map_terrain_is(tile_offset, TERRAIN_BUILDING)) {
+             building *other_house = building_get(map_building_at(tile_offset));
+             if (other_house->id == house->id) {
+@@ -177,10 +177,10 @@ int building_house_can_expand(building *house, int num_tiles)
+ {
+     // merge with other houses
+     for (int dir = 0; dir < MAX_DIR; dir++) {
+-        int base_offset = EXPAND_DIRECTION_DELTA[dir].offset + house->grid_offset;
++        int base_offset = map_grid_add_legacy_offset(house->grid_offset, EXPAND_DIRECTION_DELTA[dir].offset);
+         int ok_tiles = 0;
+         for (int i = 0; i < num_tiles; i++) {
+-            int tile_offset = base_offset + HOUSE_TILE_OFFSETS[i];
++            int tile_offset = map_grid_add_legacy_offset(base_offset, HOUSE_TILE_OFFSETS[i]);
+             if (map_terrain_is(tile_offset, TERRAIN_BUILDING)) {
+                 building *other_house = building_get(map_building_at(tile_offset));
+                 if (other_house->id == house->id) {
+@@ -200,10 +200,10 @@ int building_house_can_expand(building *house, int num_tiles)
+     }
+     // merge with houses and empty terrain
+     for (int dir = 0; dir < MAX_DIR; dir++) {
+-        int base_offset = EXPAND_DIRECTION_DELTA[dir].offset + house->grid_offset;
++        int base_offset = map_grid_add_legacy_offset(house->grid_offset, EXPAND_DIRECTION_DELTA[dir].offset);
+         int ok_tiles = 0;
+         for (int i = 0; i < num_tiles; i++) {
+-            int tile_offset = base_offset + HOUSE_TILE_OFFSETS[i];
++            int tile_offset = map_grid_add_legacy_offset(base_offset, HOUSE_TILE_OFFSETS[i]);
+             if (!map_terrain_is(tile_offset, TERRAIN_NOT_CLEAR)) {
+                 ok_tiles++;
+             } else if (map_terrain_is(tile_offset, TERRAIN_BUILDING)) {
+@@ -225,10 +225,10 @@ int building_house_can_expand(building *house, int num_tiles)
+     }
+     // merge with houses, empty terrain and gardens
+     for (int dir = 0; dir < MAX_DIR; dir++) {
+-        int base_offset = EXPAND_DIRECTION_DELTA[dir].offset + house->grid_offset;
++        int base_offset = map_grid_add_legacy_offset(house->grid_offset, EXPAND_DIRECTION_DELTA[dir].offset);
+         int ok_tiles = 0;
+         for (int i = 0; i < num_tiles; i++) {
+-            int tile_offset = base_offset + HOUSE_TILE_OFFSETS[i];
++            int tile_offset = map_grid_add_legacy_offset(base_offset, HOUSE_TILE_OFFSETS[i]);
+             if (!map_terrain_is(tile_offset, TERRAIN_NOT_CLEAR)) {
+                 ok_tiles++;
+             } else if (map_terrain_is(tile_offset, TERRAIN_BUILDING)) {
+@@ -372,7 +372,7 @@ static void split(building *house, int num_tiles)
+ {
+     int grid_offset = map_grid_offset(merge_data.x, merge_data.y);
+     for (int i = 0; i < num_tiles; i++) {
+-        int tile_offset = grid_offset + HOUSE_TILE_OFFSETS[i];
++        int tile_offset = map_grid_add_legacy_offset(grid_offset, HOUSE_TILE_OFFSETS[i]);
+         if (map_terrain_is(tile_offset, TERRAIN_BUILDING)) {
+             building *other_house = building_get(map_building_at(tile_offset));
+             if (other_house->id != house->id && other_house->house_size) {
+diff --git a/src/building/state.c b/src/building/state.c
+index 4128f67..705e64d 100644
+--- a/src/building/state.c
++++ b/src/building/state.c
+@@ -147,9 +147,9 @@ void building_state_save_to_buffer(buffer *buf, const building *b)
+     buffer_write_u8(buf, b->size);
+     buffer_write_u8(buf, b->house_is_merged);
+     buffer_write_u8(buf, b->house_size);
+-    buffer_write_u8(buf, b->x);
+-    buffer_write_u8(buf, b->y);
+-    buffer_write_i16(buf, b->grid_offset);
++    buffer_write_i16(buf, b->x);
++    buffer_write_i16(buf, b->y);
++    buffer_write_i32(buf, b->grid_offset);
+     buffer_write_i16(buf, b->type);
+     buffer_write_i16(buf, b->subtype.house_level); // which union field we use does not matter
+     buffer_write_u8(buf, b->road_network_id);
+@@ -162,8 +162,8 @@ void building_state_save_to_buffer(buffer *buf, const building *b)
+     buffer_write_i16(buf, b->distance_from_entry);
+     buffer_write_i16(buf, b->house_highest_population);
+     buffer_write_i16(buf, b->house_unreachable_ticks);
+-    buffer_write_u8(buf, b->road_access_x);
+-    buffer_write_u8(buf, b->road_access_y);
++    buffer_write_i16(buf, b->road_access_x);
++    buffer_write_i16(buf, b->road_access_y);
+     buffer_write_i16(buf, b->figure_id);
+     buffer_write_i16(buf, b->figure_id2);
+     buffer_write_i16(buf, b->immigrant_figure_id);
+@@ -491,9 +491,12 @@ void building_state_load_from_buffer(buffer *buf, building *b, int building_buf_
+     b->size = buffer_read_u8(buf);
+     b->house_is_merged = buffer_read_u8(buf);
+     b->house_size = buffer_read_u8(buf);
+-    b->x = buffer_read_u8(buf);
+-    b->y = buffer_read_u8(buf);
+-    b->grid_offset = buffer_read_i16(buf);
++    /* La taille de l'enregistrement distingue les deux formats : les
++     * sauvegardes anciennes (coordonnees 8 bits) restent lisibles. */
++    int large_map = building_buf_size >= BUILDING_STATE_LARGE_MAP;
++    b->x = large_map ? buffer_read_i16(buf) : buffer_read_u8(buf);
++    b->y = large_map ? buffer_read_i16(buf) : buffer_read_u8(buf);
++    b->grid_offset = large_map ? buffer_read_i32(buf) : buffer_read_i16(buf);
+     b->type = buffer_read_i16(buf);
+     if (b->type == BUILDING_WAREHOUSE_SPACE) {
+         b->subtype.warehouse_resource_id = resource_remap(buffer_read_i16(buf));
+@@ -516,8 +519,8 @@ void building_state_load_from_buffer(buffer *buf, building *b, int building_buf_
+     b->distance_from_entry = buffer_read_i16(buf);
+     b->house_highest_population = buffer_read_i16(buf);
+     b->house_unreachable_ticks = buffer_read_i16(buf);
+-    b->road_access_x = buffer_read_u8(buf);
+-    b->road_access_y = buffer_read_u8(buf);
++    b->road_access_x = large_map ? buffer_read_i16(buf) : buffer_read_u8(buf);
++    b->road_access_y = large_map ? buffer_read_i16(buf) : buffer_read_u8(buf);
+     b->figure_id = buffer_read_i16(buf);
+     b->figure_id2 = buffer_read_i16(buf);
+     b->immigrant_figure_id = buffer_read_i16(buf);
+diff --git a/src/building/state.h b/src/building/state.h
+index 69ec113..d8ae1c8 100644
+--- a/src/building/state.h
++++ b/src/building/state.h
+@@ -16,7 +16,10 @@
+ #define BUILDING_STATE_DYNAMIC_RESOURCES (BUILDING_STATE_WITHOUT_RESOURCES + BUILDING_STATE_NONSTATIC_RESOURCE_SIZE)
+ #define BUILDING_STATE_LATRINES (BUILDING_STATE_DYNAMIC_RESOURCES + 9)
+ #define BUILDING_STATE_U16_EVOLVE_TEXTS (BUILDING_STATE_LATRINES + 8)
+-#define BUILDING_STATE_CURRENT_BUFFER_SIZE  (BUILDING_STATE_U16_EVOLVE_TEXTS)
++// Depuis les cartes extensibles : x/y et acces routier sur 16 bits (+4 octets)
++// et offset de grille sur 32 bits (+2 octets).
++#define BUILDING_STATE_LARGE_MAP (BUILDING_STATE_U16_EVOLVE_TEXTS + 6)
++#define BUILDING_STATE_CURRENT_BUFFER_SIZE  (BUILDING_STATE_LARGE_MAP)
+ 
+ void building_state_save_to_buffer(buffer *buf, const building *b);
+ 
+diff --git a/src/city/view.c b/src/city/view.c
+index bb663f5..bd5b47c 100644
+--- a/src/city/view.c
++++ b/src/city/view.c
+@@ -43,7 +43,48 @@ static struct {
+     } selected_tile;
+ } data;
+ 
+-static int view_to_grid_offset_lookup[VIEW_X_MAX][VIEW_Y_MAX];
++#include <stdlib.h>
++
++/*
++ * Table de correspondance vue -> offset de grille.
++ *
++ * Elle couvre toute la carte, donc ses dimensions dependent du pas de grille
++ * et non plus d'une constante : une carte plus grande que 162 tuiles exigeait
++ * sinon un debordement de tableau.
++ */
++static int *view_to_grid_offset_lookup;
++static int view_x_max = VIEW_X_MAX;
++static int view_y_max = VIEW_Y_MAX;
++static int lookup_dummy_cell = -1;
++
++static void ensure_view_lookup(void)
++{
++    int x_max = map_grid_stride + 3;
++    int y_max = map_grid_stride * 2 + 1;
++    if (view_to_grid_offset_lookup && x_max == view_x_max && y_max == view_y_max) {
++        return;
++    }
++    int *table = calloc((size_t) x_max * (size_t) y_max, sizeof(int));
++    if (!table) {
++        return;
++    }
++    free(view_to_grid_offset_lookup);
++    view_to_grid_offset_lookup = table;
++    view_x_max = x_max;
++    view_y_max = y_max;
++}
++
++static int *lookup_cell(int x, int y)
++{
++    ensure_view_lookup();
++    if (!view_to_grid_offset_lookup || x < 0 || y < 0 || x >= view_x_max || y >= view_y_max) {
++        lookup_dummy_cell = -1;
++        return &lookup_dummy_cell;
++    }
++    return &view_to_grid_offset_lookup[(size_t) x * (size_t) view_y_max + y];
++}
++
++#define LOOKUP(x, y) (*lookup_cell((x), (y)))
+ 
+ static void check_camera_boundaries(void)
+ {
+@@ -57,8 +98,8 @@ static void check_camera_boundaries(void)
+         allowance = 0; // disable allowance, use original bounds calculations
+     }
+     int grid_height = map_grid_height() * 2;
+-    int x_min = (VIEW_X_MAX - map_grid_width()) / 2;
+-    int y_min = (VIEW_Y_MAX - grid_height) / 2;
++    int x_min = (view_x_max - map_grid_width()) / 2;
++    int y_min = (view_y_max - grid_height) / 2;
+     if (data.viewport.width_tiles >= map_grid_width() + allowance + 4) {
+         data.camera.tile.x = x_min - 1 - (data.viewport.width_tiles - map_grid_width()) / 2;
+         data.camera.pixel.x = TILE_WIDTH_PIXELS -
+@@ -68,7 +109,7 @@ static void check_camera_boundaries(void)
+             data.camera.tile.x = x_min - allowance - 1;
+             data.camera.pixel.x = 0;
+         }
+-        int max_x_tile = VIEW_X_MAX - x_min - data.viewport.width_tiles + allowance;
++        int max_x_tile = view_x_max - x_min - data.viewport.width_tiles + allowance;
+         int max_x_pixel = TILE_WIDTH_PIXELS -
+             (calc_adjust_with_percentage(data.viewport.width_pixels + 2, data.scale) % TILE_WIDTH_PIXELS);
+         if (data.camera.tile.x > max_x_tile || (data.camera.tile.x == max_x_tile && data.camera.pixel.x > max_x_pixel)) {
+@@ -88,7 +129,7 @@ static void check_camera_boundaries(void)
+             data.camera.tile.y = min_y_tile;
+             data.camera.pixel.y = 0;
+         }
+-        int max_y_tile = (VIEW_Y_MAX - y_min - data.viewport.height_tiles + allowance * 2) & ~1;
++        int max_y_tile = (view_y_max - y_min - data.viewport.height_tiles + allowance * 2) & ~1;
+         int max_y_pixel = TILE_HEIGHT_PIXELS -
+             (calc_adjust_with_percentage(data.viewport.height_pixels, data.scale) % TILE_HEIGHT_PIXELS);
+         if (data.camera.tile.y > max_y_tile || (data.camera.tile.y == max_y_tile && data.camera.pixel.y > max_y_pixel)) {
+@@ -101,9 +142,10 @@ static void check_camera_boundaries(void)
+ 
+ static void reset_lookup(void)
+ {
+-    for (int y = 0; y < VIEW_Y_MAX; y++) {
+-        for (int x = 0; x < VIEW_X_MAX; x++) {
+-            view_to_grid_offset_lookup[x][y] = -1;
++    ensure_view_lookup();
++    for (int y = 0; y < view_y_max; y++) {
++        for (int x = 0; x < view_x_max; x++) {
++            view_to_grid_offset_lookup[(size_t) x * (size_t) view_y_max + y] = -1;
+         }
+     }
+ }
+@@ -120,7 +162,7 @@ static void calculate_lookup(void)
+     switch (data.orientation) {
+         default:
+         case DIR_0_TOP:
+-            x_view_start = VIEW_X_MAX - 1;
++            x_view_start = view_x_max - 1;
+             x_view_skip = -1;
+             x_view_step = 1;
+             y_view_start = 1;
+@@ -131,37 +173,37 @@ static void calculate_lookup(void)
+             x_view_start = 3;
+             x_view_skip = 1;
+             x_view_step = 1;
+-            y_view_start = VIEW_X_MAX - 3;
++            y_view_start = view_x_max - 3;
+             y_view_skip = 1;
+             y_view_step = -1;
+             break;
+         case DIR_4_BOTTOM:
+-            x_view_start = VIEW_X_MAX - 1;
++            x_view_start = view_x_max - 1;
+             x_view_skip = 1;
+             x_view_step = -1;
+-            y_view_start = VIEW_Y_MAX - 2;
++            y_view_start = view_y_max - 2;
+             y_view_skip = -1;
+             y_view_step = -1;
+             break;
+         case DIR_6_LEFT:
+-            x_view_start = VIEW_Y_MAX;
++            x_view_start = view_y_max;
+             x_view_skip = -1;
+             x_view_step = -1;
+-            y_view_start = VIEW_X_MAX - 3;
++            y_view_start = view_x_max - 3;
+             y_view_skip = -1;
+             y_view_step = 1;
+             break;
+     }
+ 
+-    for (int y = 0; y < GRID_SIZE; y++) {
++    for (int y = 0; y < map_grid_stride; y++) {
+         int x_view = x_view_start;
+         int y_view = y_view_start;
+-        for (int x = 0; x < GRID_SIZE; x++) {
+-            int grid_offset = x + GRID_SIZE * y;
++        for (int x = 0; x < map_grid_stride; x++) {
++            int grid_offset = x + map_grid_stride * y;
+             if (map_image_at(grid_offset) < 6) {
+-                view_to_grid_offset_lookup[x_view / 2][y_view] = -1;
++                LOOKUP(x_view / 2, y_view) = -1;
+             } else {
+-                view_to_grid_offset_lookup[x_view / 2][y_view] = grid_offset;
++                LOOKUP(x_view / 2, y_view) = grid_offset;
+             }
+             x_view += x_view_step;
+             y_view += y_view_step;
+@@ -176,18 +218,18 @@ void city_view_set_custom_lookup(int start_offset, int width, int height, int bo
+     reset_lookup();
+ 
+     int start_x = border_size / 2;
+-    int end_x = GRID_SIZE - start_x;
+-    int start_y = (start_offset - start_x) / GRID_SIZE;
++    int end_x = map_grid_stride - start_x;
++    int start_y = (start_offset - start_x) / map_grid_stride;
+     int end_y = start_y + height;
+ 
+-    int x_view_start = VIEW_X_MAX - 1 - start_y;
++    int x_view_start = view_x_max - 1 - start_y;
+     int y_view_start = 1 + start_y;
+ 
+     for (int y = start_y; y < end_y; y++) {
+         int x_view = x_view_start + start_x;
+         int y_view = y_view_start + start_x;
+         for (int x = start_x; x < end_x; x++) {
+-            view_to_grid_offset_lookup[x_view / 2][y_view] = x + GRID_SIZE * y;
++            LOOKUP(x_view / 2, y_view) = x + map_grid_stride * y;
+             x_view++;
+             y_view++;
+         }
+@@ -201,6 +243,16 @@ void city_view_restore_lookup(void)
+     calculate_lookup();
+ }
+ 
++void city_view_shift_camera_for_expansion(int dx, int dy, int stride_delta)
++{
++    /* Le contenu de la carte a ete decale de (dx, dy) dans la grille et le
++     * lookup s'est elargi de stride_delta : la camera doit suivre pour rester
++     * sur la meme zone (x est un index de lookup, donc divise par deux). */
++    data.camera.tile.x += (stride_delta + dx - dy) / 2;
++    data.camera.tile.y += dx + dy;
++    check_camera_boundaries();
++}
++
+ static void adjust_camera_position_for_pixels(void)
+ {
+     while (data.camera.pixel.x < 0) {
+@@ -284,14 +336,14 @@ static void adjust_for_orientation(int x, int y, int orientation, int *x_out, in
+             break;
+         case DIR_2_RIGHT:
+             *x_out = y / 2;
+-            *y_out = (VIEW_X_MAX - x) * 2;
++            *y_out = (view_x_max - x) * 2;
+             break;
+         case DIR_4_BOTTOM:
+-            *x_out = VIEW_X_MAX - x;
+-            *y_out = VIEW_Y_MAX - y;
++            *x_out = view_x_max - x;
++            *y_out = view_y_max - y;
+             break;
+         case DIR_6_LEFT:
+-            *x_out = (VIEW_Y_MAX - y) / 2;
++            *x_out = (view_y_max - y) / 2;
+             *y_out = x * 2;
+             break;
+     }
+@@ -462,9 +514,9 @@ void city_view_scroll(int x, int y)
+ void city_view_grid_offset_to_xy_view(int grid_offset, int *x_view, int *y_view)
+ {
+     *x_view = *y_view = 0;
+-    for (int y = 0; y < VIEW_Y_MAX; y++) {
+-        for (int x = 0; x < VIEW_X_MAX; x++) {
+-            if (view_to_grid_offset_lookup[x][y] == grid_offset) {
++    for (int y = 0; y < view_y_max; y++) {
++        for (int x = 0; x < view_x_max; x++) {
++            if (LOOKUP(x, y) == grid_offset) {
+                 *x_view = x;
+                 *y_view = y;
+                 return;
+@@ -517,7 +569,7 @@ int city_view_pixels_to_view_tile(int x_pixels, int y_pixels, view_tile *tile)
+     }
+     tile->x = data.camera.tile.x + x_view_offset;
+     tile->y = data.camera.tile.y + y_view_offset;
+-    return tile->x >= 0 && tile->x < VIEW_X_MAX && tile->y >= 0 && tile->y < VIEW_Y_MAX;
++    return tile->x >= 0 && tile->x < view_x_max && tile->y >= 0 && tile->y < view_y_max;
+ }
+ 
+ void city_view_set_selected_view_tile(const view_tile *tile)
+@@ -527,7 +579,7 @@ void city_view_set_selected_view_tile(const view_tile *tile)
+ 
+ int city_view_tile_to_grid_offset(const view_tile *tile)
+ {
+-    int grid_offset = view_to_grid_offset_lookup[tile->x][tile->y];
++    int grid_offset = LOOKUP(tile->x, tile->y);
+     return grid_offset < 0 ? 0 : grid_offset;
+ }
+ 
+@@ -547,7 +599,7 @@ static int get_center_grid_offset(void)
+ {
+     int x_center = data.camera.tile.x + data.viewport.width_tiles / 2;
+     int y_center = data.camera.tile.y + data.viewport.height_tiles / 2;
+-    return view_to_grid_offset_lookup[x_center][y_center];
++    return LOOKUP(x_center, y_center);
+ }
+ 
+ void city_view_rotate_left(void)
+@@ -707,7 +759,7 @@ void city_view_foreach_valid_map_tile(map_callback *callback)
+     int y_view = data.camera.tile.y - 8;
+     int y_graphic = data.viewport.y - 9 * HALF_TILE_HEIGHT_PIXELS - data.camera.pixel.y;
+     for (int y = 0; y < data.viewport.height_tiles + 21; y++) {
+-        if (y_view >= 0 && y_view < VIEW_Y_MAX) {
++        if (y_view >= 0 && y_view < view_y_max) {
+             int x_graphic = -(6 * TILE_WIDTH_PIXELS) - data.camera.pixel.x;
+             if (odd) {
+                 x_graphic += data.viewport.x - HALF_TILE_WIDTH_PIXELS;
+@@ -716,8 +768,8 @@ void city_view_foreach_valid_map_tile(map_callback *callback)
+             }
+             int x_view = data.camera.tile.x - 6;
+             for (int x = 0; x < data.viewport.width_tiles + 9; x++) {
+-                if (x_view >= 0 && x_view < VIEW_X_MAX) {
+-                    int grid_offset = view_to_grid_offset_lookup[x_view][y_view];
++                if (x_view >= 0 && x_view < view_x_max) {
++                    int grid_offset = LOOKUP(x_view, y_view);
+                     if (grid_offset >= 0) {
+                         callback(x_graphic, y_graphic, grid_offset);
+                     }
+@@ -739,7 +791,7 @@ void city_view_foreach_valid_map_tile_row(map_callback *callback1, map_callback
+     int y_graphic = data.viewport.y - 9 * HALF_TILE_HEIGHT_PIXELS - data.camera.pixel.y;
+     int x_graphic, x_view;
+     for (int y = 0; y < data.viewport.height_tiles + 21; y++) {
+-        if (y_view >= 0 && y_view < VIEW_Y_MAX) {
++        if (y_view >= 0 && y_view < view_y_max) {
+             if (callback1) {
+                 x_graphic = -(6 * TILE_WIDTH_PIXELS) - data.camera.pixel.x;
+                 if (odd) {
+@@ -749,8 +801,8 @@ void city_view_foreach_valid_map_tile_row(map_callback *callback1, map_callback
+                 }
+                 x_view = data.camera.tile.x - 6;
+                 for (int x = 0; x < data.viewport.width_tiles + 9; x++) {
+-                    if (x_view >= 0 && x_view < VIEW_X_MAX) {
+-                        int grid_offset = view_to_grid_offset_lookup[x_view][y_view];
++                    if (x_view >= 0 && x_view < view_x_max) {
++                        int grid_offset = LOOKUP(x_view, y_view);
+                         if (grid_offset >= 0) {
+                             callback1(x_graphic, y_graphic, grid_offset);
+                         }
+@@ -768,8 +820,8 @@ void city_view_foreach_valid_map_tile_row(map_callback *callback1, map_callback
+                 }
+                 x_view = data.camera.tile.x - 6;
+                 for (int x = 0; x < data.viewport.width_tiles + 9; x++) {
+-                    if (x_view >= 0 && x_view < VIEW_X_MAX) {
+-                        int grid_offset = view_to_grid_offset_lookup[x_view][y_view];
++                    if (x_view >= 0 && x_view < view_x_max) {
++                        int grid_offset = LOOKUP(x_view, y_view);
+                         if (grid_offset >= 0) {
+                             callback2(x_graphic, y_graphic, grid_offset);
+                         }
+@@ -787,8 +839,8 @@ void city_view_foreach_valid_map_tile_row(map_callback *callback1, map_callback
+                 }
+                 x_view = data.camera.tile.x - 6;
+                 for (int x = 0; x < data.viewport.width_tiles + 9; x++) {
+-                    if (x_view >= 0 && x_view < VIEW_X_MAX) {
+-                        int grid_offset = view_to_grid_offset_lookup[x_view][y_view];
++                    if (x_view >= 0 && x_view < view_x_max) {
++                        int grid_offset = LOOKUP(x_view, y_view);
+                         if (grid_offset >= 0) {
+                             callback3(x_graphic, y_graphic, grid_offset);
+                         }
+@@ -907,8 +959,8 @@ void city_view_foreach_minimap_tile(
+         }
+         int x_abs = absolute_x - 4;
+         for (int x_rel = -4; x_rel < width_tiles; x_rel++, x_abs++, x_view += 2) {
+-            if (x_abs >= 0 && x_abs < VIEW_X_MAX && y_abs >= 0 && y_abs < VIEW_Y_MAX) {
+-                callback(x_view, y_view, view_to_grid_offset_lookup[x_abs][y_abs]);
++            if (x_abs >= 0 && x_abs < view_x_max && y_abs >= 0 && y_abs < view_y_max) {
++                callback(x_view, y_view, LOOKUP(x_abs, y_abs));
+             }
+         }
+     }
+diff --git a/src/city/view.h b/src/city/view.h
+index 9fbc56a..cdb9949 100644
+--- a/src/city/view.h
++++ b/src/city/view.h
+@@ -26,6 +26,9 @@ void city_view_init(void);
+ void city_view_set_custom_lookup(int start_offset, int width, int height, int border_size);
+ void city_view_restore_lookup(void);
+ 
++/** Recentre la camera apres un agrandissement de la carte. */
++void city_view_shift_camera_for_expansion(int dx, int dy, int stride_delta);
++
+ int city_view_orientation(void);
+ 
+ void city_view_reset_orientation(void);
+diff --git a/src/core/config.c b/src/core/config.c
+index c16eddb..db33374 100644
+--- a/src/core/config.c
++++ b/src/core/config.c
+@@ -148,6 +148,7 @@ static const char *ini_keys[] = {
+     [CONFIG_UI_SHOW_OUTSKIRTS_DESIRABILITY] = "ui_show_outskirts_desirability",
+     [CONFIG_UI_SCROLL_LEGACY_SCROLLBAR] = "ui_scroll_old_scroll", // keep comma after last entry please
+     [CONFIG_FIX_EMPIRE_MAP_DIMENSIONS] = "fix_empire_map_dimensions",
++    [CONFIG_MAP_EXPANDED_SIZE] = "map_expanded_size",
+ };
+ 
+ static const char *ini_string_keys[] = {
+@@ -226,7 +227,8 @@ static int default_values[CONFIG_MAX_ENTRIES] = {
+     [CONFIG_UI_CLIMATE_GRID_COLORS] = 1,
+     [CONFIG_UI_SCROLL_CAMERA_UNLOCKED] = 1,
+     [CONFIG_UI_SCROLL_LEGACY_SCROLLBAR] = 0,
+-    [CONFIG_FIX_EMPIRE_MAP_DIMENSIONS] = 0,//keep the comma after last entry please
++    [CONFIG_FIX_EMPIRE_MAP_DIMENSIONS] = 0,
++    [CONFIG_MAP_EXPANDED_SIZE] = 5, // index dans map_expand_size_options, 5 = 512 tuiles
+ };
+ 
+ static const char default_string_values[CONFIG_STRING_MAX_ENTRIES][CONFIG_STRING_VALUE_MAX] = { 0 };
+diff --git a/src/core/config.h b/src/core/config.h
+index 5fcfeb4..e5b6543 100644
+--- a/src/core/config.h
++++ b/src/core/config.h
+@@ -138,6 +138,7 @@ typedef enum {
+     CONFIG_UI_SHOW_OUTSKIRTS_DESIRABILITY,
+     CONFIG_UI_SCROLL_LEGACY_SCROLLBAR,
+     CONFIG_FIX_EMPIRE_MAP_DIMENSIONS,
++    CONFIG_MAP_EXPANDED_SIZE,
+     CONFIG_MAX_ENTRIES
+ } config_key;
+ 
+diff --git a/src/editor/tool_restriction.c b/src/editor/tool_restriction.c
+index e344317..a28121a 100644
+--- a/src/editor/tool_restriction.c
++++ b/src/editor/tool_restriction.c
+@@ -6,7 +6,7 @@
+ #include "map/grid.h"
+ #include "map/terrain.h"
+ 
+-#define OFFSET(x,y) (x + GRID_SIZE * y)
++#define OFFSET(x,y) (x + MAP_GRID_STATIC_STRIDE * y)
+ 
+ static const int TILE_GRID_OFFSETS[] = {
+ OFFSET(0,0), OFFSET(0,1), OFFSET(1,0), OFFSET(1,1),
+@@ -93,7 +93,7 @@ int editor_tool_can_place_access_ramp(const map_tile *tile, int *orientation_ind
+         int wrong_tiles = 0;
+         int top_elevation = 0;
+         for (int index = 0; index < 6; index++) {
+-            int tile_offset = tile->grid_offset + ACCESS_RAMP_TILE_OFFSETS_BY_ORIENTATION[orientation][index];
++            int tile_offset = map_grid_add_legacy_offset(tile->grid_offset, ACCESS_RAMP_TILE_OFFSETS_BY_ORIENTATION[orientation][index]);
+             int elevation = map_elevation_at(tile_offset);
+             if (index < 2) {
+                 if (map_terrain_is(tile_offset, TERRAIN_ELEVATION)) {
+@@ -138,7 +138,7 @@ int editor_tool_can_place_building(const map_tile *tile, int num_tiles, int *blo
+ {
+     int blocked = 0;
+     for (int i = 0; i < num_tiles; i++) {
+-        int tile_offset = tile->grid_offset + TILE_GRID_OFFSETS[i];
++        int tile_offset = map_grid_add_legacy_offset(tile->grid_offset, TILE_GRID_OFFSETS[i]);
+         int forbidden_terrain = map_terrain_get(tile_offset) & TERRAIN_NOT_CLEAR;
+         if (forbidden_terrain || map_has_figure_at(tile_offset)) {
+             blocked = 1;
+diff --git a/src/figure/figure.c b/src/figure/figure.c
+index 99e7d5e..a247e52 100644
+--- a/src/figure/figure.c
++++ b/src/figure/figure.c
+@@ -21,7 +21,10 @@
+ #define FIGURE_ARRAY_SIZE_STEP 1000
+ 
+ #define FIGURE_ORIGINAL_BUFFER_SIZE 128
+-#define FIGURE_CURRENT_BUFFER_SIZE 171
++/* Depuis les cartes extensibles : coordonnees sur 16 bits (+8 octets) et
++ * offsets de grille sur 32 bits (+4 octets). */
++#define FIGURE_LARGE_MAP_BUFFER_SIZE (171 + 12)
++#define FIGURE_CURRENT_BUFFER_SIZE FIGURE_LARGE_MAP_BUFFER_SIZE
+ 
+ static struct {
+     int created_sequence;
+@@ -373,18 +376,18 @@ static void figure_save(buffer *buf, const figure *f)
+     buffer_write_i8(buf, f->direction);
+     buffer_write_i8(buf, f->previous_tile_direction);
+     buffer_write_i8(buf, f->attack_direction);
+-    buffer_write_u8(buf, f->x);
+-    buffer_write_u8(buf, f->y);
+-    buffer_write_u8(buf, f->previous_tile_x);
+-    buffer_write_u8(buf, f->previous_tile_y);
++    buffer_write_i16(buf, f->x);
++    buffer_write_i16(buf, f->y);
++    buffer_write_i16(buf, f->previous_tile_x);
++    buffer_write_i16(buf, f->previous_tile_y);
+     buffer_write_u8(buf, f->missile_height);
+     buffer_write_u8(buf, f->damage);
+-    buffer_write_i16(buf, f->grid_offset);
+-    buffer_write_u8(buf, f->destination_x);
+-    buffer_write_u8(buf, f->destination_y);
+-    buffer_write_i16(buf, f->destination_grid_offset);
+-    buffer_write_u8(buf, f->source_x);
+-    buffer_write_u8(buf, f->source_y);
++    buffer_write_i32(buf, f->grid_offset);
++    buffer_write_i16(buf, f->destination_x);
++    buffer_write_i16(buf, f->destination_y);
++    buffer_write_i32(buf, f->destination_grid_offset);
++    buffer_write_i16(buf, f->source_x);
++    buffer_write_i16(buf, f->source_y);
+     buffer_write_u8(buf, f->formation_position_x.soldier);
+     buffer_write_u8(buf, f->formation_position_y.soldier);
+     buffer_write_i16(buf, f->disallow_diagonal);
+@@ -504,18 +507,38 @@ static void figure_load(buffer *buf, figure *f, int figure_buf_size, int version
+     f->direction = buffer_read_i8(buf);
+     f->previous_tile_direction = buffer_read_i8(buf);
+     f->attack_direction = buffer_read_i8(buf);
+-    f->x = buffer_read_u8(buf);
+-    f->y = buffer_read_u8(buf);
+-    f->previous_tile_x = buffer_read_u8(buf);
+-    f->previous_tile_y = buffer_read_u8(buf);
++    /* La taille de l'enregistrement indique le format : les sauvegardes
++     * anciennes (coordonnees 8 bits) restent lisibles. */
++    int large_map = figure_buf_size >= FIGURE_LARGE_MAP_BUFFER_SIZE;
++    if (large_map) {
++        f->x = buffer_read_i16(buf);
++        f->y = buffer_read_i16(buf);
++        f->previous_tile_x = buffer_read_i16(buf);
++        f->previous_tile_y = buffer_read_i16(buf);
++    } else {
++        f->x = buffer_read_u8(buf);
++        f->y = buffer_read_u8(buf);
++        f->previous_tile_x = buffer_read_u8(buf);
++        f->previous_tile_y = buffer_read_u8(buf);
++    }
+     f->missile_height = buffer_read_u8(buf);
+     f->damage = buffer_read_u8(buf);
+-    f->grid_offset = buffer_read_i16(buf);
+-    f->destination_x = buffer_read_u8(buf);
+-    f->destination_y = buffer_read_u8(buf);
+-    f->destination_grid_offset = buffer_read_i16(buf);
+-    f->source_x = buffer_read_u8(buf);
+-    f->source_y = buffer_read_u8(buf);
++    f->grid_offset = large_map ? buffer_read_i32(buf) : buffer_read_i16(buf);
++    if (large_map) {
++        f->destination_x = buffer_read_i16(buf);
++        f->destination_y = buffer_read_i16(buf);
++    } else {
++        f->destination_x = buffer_read_u8(buf);
++        f->destination_y = buffer_read_u8(buf);
++    }
++    f->destination_grid_offset = large_map ? buffer_read_i32(buf) : buffer_read_i16(buf);
++    if (large_map) {
++        f->source_x = buffer_read_i16(buf);
++        f->source_y = buffer_read_i16(buf);
++    } else {
++        f->source_x = buffer_read_u8(buf);
++        f->source_y = buffer_read_u8(buf);
++    }
+     f->formation_position_x.soldier = buffer_read_u8(buf);
+     f->formation_position_y.soldier = buffer_read_u8(buf);
+     f->disallow_diagonal = buffer_read_i16(buf);
+diff --git a/src/figure/figure.h b/src/figure/figure.h
+index dec7b0d..a173c1f 100644
+--- a/src/figure/figure.h
++++ b/src/figure/figure.h
+@@ -30,18 +30,18 @@ typedef struct {
+     signed char direction;
+     signed char previous_tile_direction;
+     signed char attack_direction;
+-    unsigned char x;
+-    unsigned char y;
+-    unsigned char previous_tile_x;
+-    unsigned char previous_tile_y;
++    short x;
++    short y;
++    short previous_tile_x;
++    short previous_tile_y;
+     unsigned char missile_height;
+     unsigned char damage;
+-    short grid_offset;
+-    unsigned char destination_x;
+-    unsigned char destination_y;
+-    short destination_grid_offset; // only used for soldiers
+-    unsigned char source_x;
+-    unsigned char source_y;
++    int grid_offset;
++    short destination_x;
++    short destination_y;
++    int destination_grid_offset; // only used for soldiers
++    short source_x;
++    short source_y;
+     union {
+         unsigned char soldier;
+         signed char enemy;
+diff --git a/src/figure/roamer_preview.c b/src/figure/roamer_preview.c
+index 407fa4c..540f316 100644
+--- a/src/figure/roamer_preview.c
++++ b/src/figure/roamer_preview.c
+@@ -23,6 +23,8 @@ static struct {
+     int stored_building_types;
+ } data;
+ 
++MAP_GRID_REGISTER(data.travelled_tiles, u8);
++
+ static figure_type building_type_to_figure_type(building_type type)
+ {
+     switch (type) {
+diff --git a/src/figuretype/animal.c b/src/figuretype/animal.c
+index 6912e11..b617d65 100644
+--- a/src/figuretype/animal.c
++++ b/src/figuretype/animal.c
+@@ -131,7 +131,7 @@ void figure_seagulls_action(figure *f)
+     }
+ }
+ 
+-static void herd_get_destination(int index, const formation *m, uint8_t *x, uint8_t *y)
++static void herd_get_destination(int index, const formation *m, short *x, short *y)
+ {
+     int offset_x = formation_layout_position_x(FORMATION_HERD, index);
+     int offset_y = formation_layout_position_y(FORMATION_HERD, index);
+diff --git a/src/game/file.c b/src/game/file.c
+index 02841f9..ee43282 100644
+--- a/src/game/file.c
++++ b/src/game/file.c
+@@ -1,6 +1,15 @@
+ #include "file.h"
+ 
++#include "building/building.h"
+ #include "building/construction.h"
++#include "figure/figure.h"
++#include "map/grid.h"
++#include "map/image.h"
++#include "map/property.h"
++#include "map/terrain.h"
++#include "map/tiles.h"
++#include "scenario/data.h"
++#include "scenario/map.h"
+ #include "building/granary.h"
+ #include "building/maintenance.h"
+ #include "building/menu.h"
+@@ -23,6 +32,7 @@
+ #include "core/io.h"
+ #include "core/lang.h"
+ #include "core/string.h"
++#include "core/log.h"
+ #include "empire/city.h"
+ #include "empire/empire.h"
+ #include "empire/trade_prices.h"
+@@ -148,10 +158,127 @@ static void clear_scenario_data(void)
+     map_random_init();
+ }
+ 
++/*
++ * Agrandissement de la carte : les objets charges du fichier portent des
++ * offsets calcules avec l'ancienne geometrie. On les recalcule a partir de
++ * leurs coordonnees, puis on prepare la terre vide de la nouvelle surface.
++ */
++/* Les coordonnees lues dans un scenario ou une sauvegarde sont exprimees dans
++ * la geometrie d'origine. Comme la carte d'origine est centree dans la grille
++ * agrandie, il faut decaler toutes les positions persistantes : sinon les
++ * batiments, les villageois et les points d'entree restent dans le coin vide
++ * alors que le terrain, lui, a bien ete deplace. */
++static void map_shift_world_coordinates(int dx, int dy)
++{
++    if (!dx && !dy) {
++        return;
++    }
++    for (unsigned int i = 1; i < building_count(); i++) {
++        building *b = building_get(i);
++        b->x += dx;
++        b->y += dy;
++    }
++    for (unsigned int i = 1; i < figure_count(); i++) {
++        figure *f = figure_get(i);
++        f->x += dx;
++        f->y += dy;
++        f->previous_tile_x += dx;
++        f->previous_tile_y += dy;
++        f->destination_x += dx;
++        f->destination_y += dy;
++        f->source_x += dx;
++        f->source_y += dy;
++        f->cc_destination_x += dx;
++        f->cc_destination_y += dy;
++    }
++    scenario.entry_point.x += dx;
++    scenario.entry_point.y += dy;
++    scenario.exit_point.x += dx;
++    scenario.exit_point.y += dy;
++    if (scenario.river_entry_point.x >= 0) {
++        scenario.river_entry_point.x += dx;
++        scenario.river_entry_point.y += dy;
++    }
++    if (scenario.river_exit_point.x >= 0) {
++        scenario.river_exit_point.x += dx;
++        scenario.river_exit_point.y += dy;
++    }
++    for (int i = 0; i < MAX_HERD_POINTS; i++) {
++        if (scenario.herd_points[i].x > 0) {
++            scenario.herd_points[i].x += dx;
++            scenario.herd_points[i].y += dy;
++        }
++    }
++    for (int i = 0; i < MAX_FISH_POINTS; i++) {
++        if (scenario.fishing_points[i].x > 0) {
++            scenario.fishing_points[i].x += dx;
++            scenario.fishing_points[i].y += dy;
++        }
++    }
++    const map_tile *entry = city_map_entry_point();
++    if (entry->x || entry->y) {
++        city_map_set_entry_point(entry->x + dx, entry->y + dy);
++    }
++    const map_tile *exit = city_map_exit_point();
++    if (exit->x || exit->y) {
++        city_map_set_exit_point(exit->x + dx, exit->y + dy);
++    }
++    const map_tile *entry_flag = city_map_entry_flag();
++    if (entry_flag->grid_offset > 0) {
++        city_map_set_entry_flag(entry_flag->x + dx, entry_flag->y + dy);
++    }
++    const map_tile *exit_flag = city_map_exit_flag();
++    if (exit_flag->grid_offset > 0) {
++        city_map_set_exit_flag(exit_flag->x + dx, exit_flag->y + dy);
++    }
++}
++
++static void map_recompute_object_offsets(void)
++{
++    int dx = map_grid_expand_offset_x;
++    int dy = map_grid_expand_offset_y;
++
++    /* La carte a grandi : la camera doit pointer sur la meme zone qu'avant. */
++    city_view_shift_camera_for_expansion(dx, dy, map_grid_expand_stride_delta);
++
++    map_shift_world_coordinates(dx, dy);
++    for (unsigned int i = 1; i < building_count(); i++) {
++        building *b = building_get(i);
++        b->grid_offset = map_grid_offset(b->x, b->y);
++    }
++    int misaligned = 0;
++    for (unsigned int i = 1; i < building_count(); i++) {
++        if (map_building_at(building_get(i)->grid_offset) != (int) i) {
++            misaligned++;
++        }
++    }
++    char alignment_report[96];
++    snprintf(alignment_report, sizeof(alignment_report), "Map expansion: %d buildings misaligned", misaligned);
++    log_info(alignment_report, 0, 0);
++    for (unsigned int i = 1; i < figure_count(); i++) {
++        figure *f = figure_get(i);
++        f->grid_offset = map_grid_offset(f->x, f->y);
++        f->destination_grid_offset = map_grid_offset(f->destination_x, f->destination_y);
++    }
++    for (int offset = 0; offset < map_grid_tiles; offset++) {
++        if (!map_image_at(offset) && !map_terrain_get(offset)) {
++            /* Les tuiles de la zone etendue avaient toutes la meme valeur
++             * aleatoire : sans cela l'herbe y formait un damier uniforme. */
++            map_random_seed(offset);
++            map_property_mark_draw_tile(offset);
++        }
++    }
++    map_tiles_update_all_empty_land();
++    map_tiles_update_all_meadow();
++}
++
+ static void initialize_scenario_data(const uint8_t *scenario_name)
+ {
+     scenario_set_name(scenario_name);
+     scenario_map_init();
++    if (scenario_map_expand()) {
++        map_recompute_object_offsets();
++    }
+ 
+     // initialize grids
+     map_tiles_update_all_elevation();
+@@ -293,6 +420,17 @@ static void initialize_saved_game(void)
+     map_image_update_all();
+ 
+     scenario_map_init();
++    if (scenario_map_expand()) {
++        map_recompute_object_offsets();
++    }
++    /* Les coordonnees du point d'entree sont stockees sur 8/16 bits dans le
++     * format d'origine : sur une grande carte elles sont tronquees (offset
++     * negatif). Le scenario fait foi, on les reconstruit donc a partir de lui. */
++    scenario_map_init_entry_exit();
++    map_point entry_point = scenario_map_entry();
++    map_point exit_point = scenario_map_exit();
++    city_map_set_entry_point(entry_point.x, entry_point.y);
++    city_map_set_exit_point(exit_point.x, exit_point.y);
+ 
+     city_view_init();
+ 
+diff --git a/src/game/file_io.c b/src/game/file_io.c
+index ae972cb..8102e28 100644
+--- a/src/game/file_io.c
++++ b/src/game/file_io.c
+@@ -46,6 +46,7 @@
+ #include "map/random.h"
+ #include "map/routing.h"
+ #include "map/sprite.h"
++#include "map/grid.h"
+ #include "map/terrain.h"
+ #include "map/tiles.h"
+ #include "scenario/allowed_building.h"
+@@ -75,9 +76,9 @@
+ #define COMPRESS_BUFFER_INITIAL_SIZE 1000000
+ #define UNCOMPRESSED 0x80000000
+ #define PIECE_SIZE_DYNAMIC 0
+-#define GRID_SIZE_BUF_U8 GRID_SIZE * GRID_SIZE
+-#define GRID_SIZE_BUF_U16 GRID_SIZE * GRID_SIZE * 2
+-#define GRID_SIZE_BUF_U32 GRID_SIZE * GRID_SIZE * 4
++#define GRID_SIZE_BUF_U8 MAP_GRID_LEGACY_SIZE * MAP_GRID_LEGACY_SIZE
++#define GRID_SIZE_BUF_U16 MAP_GRID_LEGACY_SIZE * MAP_GRID_LEGACY_SIZE * 2
++#define GRID_SIZE_BUF_U32 MAP_GRID_LEGACY_SIZE * MAP_GRID_LEGACY_SIZE * 4
+ 
+ typedef struct {
+     buffer buf;
+@@ -347,6 +348,49 @@ static buffer *create_savegame_piece(int size, int compressed)
+     return &piece->buf;
+ }
+ 
++/*
++ * Grilles de carte a taille variable.
++ *
++ * Depuis SAVE_GAME_LAST_STATIC_GRID_SIZE / SCENARIO_LAST_STATIC_GRID_SIZE,
++ * chaque piece de grille est ecrite avec sa taille en prefixe et relue de la
++ * meme facon. Les fichiers plus anciens, qui n'ont pas ce prefixe, gardent des
++ * pieces de taille fixe (162x162) et restent donc lisibles.
++ */
++static int grid_piece_bytes(int element_size)
++{
++    return map_grid_tiles * element_size;
++}
++
++static buffer *create_scenario_grid_piece(int element_size, int for_save, int compressed)
++{
++    if (!for_save) {
++        return create_scenario_piece(PIECE_SIZE_DYNAMIC, compressed);
++    }
++    int size = grid_piece_bytes(element_size);
++    file_piece *piece = &scenario_data.pieces[scenario_data.num_pieces++];
++    piece->compressed = compressed;
++    piece->dynamic = 1;
++    uint8_t *data = malloc(size);
++    memset(data, 0, size);
++    buffer_init(&piece->buf, data, size);
++    return &piece->buf;
++}
++
++static buffer *create_savegame_grid_piece(int element_size, int for_save, int compressed)
++{
++    if (!for_save) {
++        return create_savegame_piece(PIECE_SIZE_DYNAMIC, compressed);
++    }
++    int size = grid_piece_bytes(element_size);
++    file_piece *piece = &savegame_data.pieces[savegame_data.num_pieces++];
++    piece->compressed = compressed;
++    piece->dynamic = 1;
++    uint8_t *data = malloc(size);
++    memset(data, 0, size);
++    buffer_init(&piece->buf, data, size);
++    return &piece->buf;
++}
++
+ static void clear_savegame_pieces(void)
+ {
+     for (int i = 0; i < savegame_data.num_pieces; i++) {
+@@ -367,28 +411,41 @@ static void clear_scenario_pieces(void)
+     scenario_data.num_pieces = 0;
+ }
+ 
+-static void init_scenario_data(scenario_version_t version)
++static void init_scenario_data(scenario_version_t version, int for_save)
+ {
++    int dynamic_grids = version > SCENARIO_LAST_STATIC_GRID_SIZE;
+     clear_scenario_pieces();
+     scenario_data.version = version;
+     scenario_state *state = &scenario_data.state;
+     if (version > SCENARIO_LAST_NO_STATIC_RESOURCES) {
+         state->resource_version = create_scenario_piece(4, 0);
+     }
+-    state->graphic_ids = create_scenario_piece(GRID_SIZE_BUF_U16, 0);
+-    state->edge = create_scenario_piece(GRID_SIZE_BUF_U8, 0);
++    state->graphic_ids = dynamic_grids
++        ? create_scenario_grid_piece(2, for_save, 0)
++        : create_scenario_piece(GRID_SIZE_BUF_U16, 0);
++    state->edge = dynamic_grids
++        ? create_scenario_grid_piece(1, for_save, 0)
++        : create_scenario_piece(GRID_SIZE_BUF_U8, 0);
+     if (version > SCENARIO_LAST_LEGACY_TERRAIN) {
+-        state->terrain = create_scenario_piece(GRID_SIZE_BUF_U32, 0);
++        state->terrain = dynamic_grids
++            ? create_scenario_grid_piece(4, for_save, 0)
++            : create_scenario_piece(GRID_SIZE_BUF_U32, 0);
+     } else {
+         state->terrain = create_scenario_piece(GRID_SIZE_BUF_U16, 0);
+     }
+     if (version > SCENARIO_LAST_NO_FORMULAS_AND_MODEL_DATA) {
+-        state->bitfields = create_scenario_piece(GRID_SIZE_BUF_U16, 0);
++        state->bitfields = dynamic_grids
++            ? create_scenario_grid_piece(2, for_save, 0)
++            : create_scenario_piece(GRID_SIZE_BUF_U16, 0);
+     } else {
+         state->bitfields = create_scenario_piece(GRID_SIZE_BUF_U8, 0);
+     }
+-    state->random = create_scenario_piece(GRID_SIZE_BUF_U8, 0);
+-    state->elevation = create_scenario_piece(GRID_SIZE_BUF_U8, 0);
++    state->random = dynamic_grids
++        ? create_scenario_grid_piece(1, for_save, 0)
++        : create_scenario_piece(GRID_SIZE_BUF_U8, 0);
++    state->elevation = dynamic_grids
++        ? create_scenario_grid_piece(1, for_save, 0)
++        : create_scenario_piece(GRID_SIZE_BUF_U8, 0);
+     state->random_iv = create_scenario_piece(8, 0);
+     state->camera = create_scenario_piece(8, 0);
+ 
+@@ -430,8 +487,12 @@ static void init_scenario_data(scenario_version_t version)
+         state->scenario_texts = create_scenario_piece(PIECE_SIZE_DYNAMIC, 1);
+     }
+     if (version > SCENARIO_LAST_NO_BRIDGE_SPRITES) {
+-        state->sprite_grid = create_scenario_piece(GRID_SIZE_BUF_U8, 1);
+-        state->sprite_backup_grid = create_scenario_piece(GRID_SIZE_BUF_U8, 1);
++        state->sprite_grid = dynamic_grids
++            ? create_scenario_grid_piece(1, for_save, 1)
++            : create_scenario_piece(GRID_SIZE_BUF_U8, 1);
++        state->sprite_backup_grid = dynamic_grids
++            ? create_scenario_grid_piece(1, for_save, 1)
++            : create_scenario_piece(GRID_SIZE_BUF_U8, 1);
+     }
+     state->end_marker = create_scenario_piece(4, 0);
+ }
+@@ -569,8 +630,10 @@ static void get_version_data(savegame_version_data *version_data, savegame_versi
+     version_data->features.monument_stages = version > SAVE_GAME_LAST_NO_HOUSE_MODELS;
+ }
+ 
+-static void init_savegame_data(savegame_version_t version)
++static void init_savegame_data(savegame_version_t version, int for_save)
+ {
++    int dynamic_grids = version > SAVE_GAME_LAST_STATIC_GRID_SIZE;
++
+     clear_savegame_pieces();
+ 
+     savegame_version_data version_data;
+@@ -588,23 +651,49 @@ static void init_savegame_data(savegame_version_t version)
+     if (version_data.features.image_grid) {
+         state->image_grid = create_savegame_piece(version_data.piece_sizes.image_grid, 1);
+     }
+-    state->edge_grid = create_savegame_piece(GRID_SIZE_BUF_U8, 1);
+-    state->building_grid = create_savegame_piece(version_data.piece_sizes.building_grid, 1);
+-    state->terrain_grid = create_savegame_piece(version_data.piece_sizes.terrain_grid, 1);
+-    state->aqueduct_grid = create_savegame_piece(GRID_SIZE_BUF_U8, 1);
+-    state->figure_grid = create_savegame_piece(GRID_SIZE_BUF_U16, 1);
++    state->edge_grid = dynamic_grids
++        ? create_savegame_grid_piece(1, for_save, 1)
++        : create_savegame_piece(GRID_SIZE_BUF_U8, 1);
++    state->building_grid = dynamic_grids
++        ? create_savegame_grid_piece(4, for_save, 1)
++        : create_savegame_piece(version_data.piece_sizes.building_grid, 1);
++    state->terrain_grid = dynamic_grids
++        ? create_savegame_grid_piece(4, for_save, 1)
++        : create_savegame_piece(version_data.piece_sizes.terrain_grid, 1);
++    state->aqueduct_grid = dynamic_grids
++        ? create_savegame_grid_piece(1, for_save, 1)
++        : create_savegame_piece(GRID_SIZE_BUF_U8, 1);
++    state->figure_grid = dynamic_grids
++        ? create_savegame_grid_piece(2, for_save, 1)
++        : create_savegame_piece(GRID_SIZE_BUF_U16, 1);
+     if (version > SAVE_GAME_LAST_NO_FORMULAS_AND_MODEL_DATA) {
+-        state->bitfields_grid = create_savegame_piece(GRID_SIZE_BUF_U16, 1);
++        state->bitfields_grid = dynamic_grids
++            ? create_savegame_grid_piece(2, for_save, 1)
++            : create_savegame_piece(GRID_SIZE_BUF_U16, 1);
+     } else {
+         state->bitfields_grid = create_savegame_piece(GRID_SIZE_BUF_U8, 1);
+     }
+-    state->sprite_grid = create_savegame_piece(GRID_SIZE_BUF_U8, 1);
+-    state->random_grid = create_savegame_piece(GRID_SIZE_BUF_U8, 0);
+-    state->desirability_grid = create_savegame_piece(GRID_SIZE_BUF_U8, 1);
+-    state->elevation_grid = create_savegame_piece(GRID_SIZE_BUF_U8, 1);
+-    state->building_damage_grid = create_savegame_piece(GRID_SIZE_BUF_U8, 1);
+-    state->aqueduct_backup_grid = create_savegame_piece(GRID_SIZE_BUF_U8, 1);
+-    state->sprite_backup_grid = create_savegame_piece(GRID_SIZE_BUF_U8, 1);
++    state->sprite_grid = dynamic_grids
++        ? create_savegame_grid_piece(1, for_save, 1)
++        : create_savegame_piece(GRID_SIZE_BUF_U8, 1);
++    state->random_grid = dynamic_grids
++        ? create_savegame_grid_piece(1, for_save, 0)
++        : create_savegame_piece(GRID_SIZE_BUF_U8, 0);
++    state->desirability_grid = dynamic_grids
++        ? create_savegame_grid_piece(1, for_save, 1)
++        : create_savegame_piece(GRID_SIZE_BUF_U8, 1);
++    state->elevation_grid = dynamic_grids
++        ? create_savegame_grid_piece(1, for_save, 1)
++        : create_savegame_piece(GRID_SIZE_BUF_U8, 1);
++    state->building_damage_grid = dynamic_grids
++        ? create_savegame_grid_piece(1, for_save, 1)
++        : create_savegame_piece(GRID_SIZE_BUF_U8, 1);
++    state->aqueduct_backup_grid = dynamic_grids
++        ? create_savegame_grid_piece(1, for_save, 1)
++        : create_savegame_piece(GRID_SIZE_BUF_U8, 1);
++    state->sprite_backup_grid = dynamic_grids
++        ? create_savegame_grid_piece(1, for_save, 1)
++        : create_savegame_piece(GRID_SIZE_BUF_U8, 1);
+     state->figures = create_savegame_piece(version_data.piece_sizes.figures, 1);
+     state->route_figures = create_savegame_piece(version_data.piece_sizes.route_figures, 1);
+     state->route_paths = create_savegame_piece(version_data.piece_sizes.route_paths, 1);
+@@ -745,7 +834,9 @@ static void init_savegame_data(savegame_version_t version)
+         state->visited_buildings = create_savegame_piece(PIECE_SIZE_DYNAMIC, 1);
+     }
+     if (version_data.features.rubble_grid) {
+-        state->rubble_grid = create_savegame_piece(GRID_SIZE_BUF_U32, 1);
++        state->rubble_grid = dynamic_grids
++            ? create_savegame_grid_piece(4, for_save, 1)
++            : create_savegame_piece(GRID_SIZE_BUF_U32, 1);
+     }
+     if (version_data.features.custom_production_rates) {
+         state->production_rates = create_savegame_piece(PIECE_SIZE_DYNAMIC, 1);
+@@ -760,6 +851,13 @@ static void init_savegame_data(savegame_version_t version)
+ 
+ static void scenario_load_from_state(scenario_state *file, scenario_version_t version)
+ {
++    /* La taille des grilles depend de la carte : la geometrie doit etre
++     * connue avant de les charger. */
++    int map_width = 0, map_height = 0, grid_start = 0, grid_border_size = 0;
++    scenario_map_data_from_buffer(file->scenario, &map_width, &map_height,
++        &grid_start, &grid_border_size, version);
++    map_grid_init(map_width, map_height, grid_start, grid_border_size);
++
+     resource_version_t resource_version = RESOURCE_ORIGINAL_VERSION;
+     if (version > SCENARIO_LAST_NO_STATIC_RESOURCES) {
+         resource_version = buffer_read_u32(file->resource_version);
+@@ -799,8 +897,6 @@ static void scenario_load_from_state(scenario_state *file, scenario_version_t ve
+         scenario_events_clear();
+     }
+ 
+-    scenario_map_init();
+-
+     if (version > SCENARIO_LAST_UNVERSIONED) {
+         empire_object_load(file->empire, version);
+         if (resource_mapping_get_version() < RESOURCE_SEPARATE_FISH_AND_MEAT_VERSION) {
+@@ -1333,7 +1429,7 @@ static int get_scenario_version_from_buffer(buffer *buf)
+ static int load_scenario_from_buffer(buffer *buf)
+ {
+     scenario_version_t version = get_scenario_version_from_buffer(buf);
+-    init_scenario_data(version);
++    init_scenario_data(version, 0);
+     if (version > SCENARIO_CURRENT_VERSION) {
+         log_error("Scenario version incompatible with current version, got version", 0, version);
+         return 0;
+@@ -1369,7 +1465,7 @@ static int load_scenario_to_buffers(const char *filename)
+         return 0;
+     }
+     scenario_version_t version = get_scenario_version(fp);
+-    init_scenario_data(version);
++    init_scenario_data(version, 0);
+     if (version > SCENARIO_CURRENT_VERSION) {
+         log_error("Scenario version incompatible with current version, got version", 0, version);
+         return 0;
+@@ -1557,7 +1653,7 @@ int game_file_io_write_scenario(const char *filename)
+ {
+     log_info("Saving scenario", filename, 0);
+     resource_set_mapping(RESOURCE_CURRENT_VERSION);
+-    init_scenario_data(SCENARIO_CURRENT_VERSION);// SCENARIO_CURRENT_VERSION
++    init_scenario_data(SCENARIO_CURRENT_VERSION, 1);// SCENARIO_CURRENT_VERSION
+     scenario_save_to_state(&scenario_data.state);
+ 
+     FILE *fp = file_open(filename, "wb");
+@@ -1716,7 +1812,7 @@ int game_file_io_read_save_game_from_buffer(buffer *buf)
+         }
+         log_info("Savegame version", 0, save_version);
+         resource_set_mapping(resource_version);
+-        init_savegame_data(save_version);
++        init_savegame_data(save_version, 0);
+         result = savegame_read_from_buffer(buf, save_version);
+     }
+     if (!result) {
+@@ -1750,7 +1846,7 @@ int game_file_io_read_saved_game(const char *filename, int offset)
+         }
+         log_info("Savegame version", 0, save_version);
+         resource_set_mapping(resource_version);
+-        init_savegame_data(save_version);
++        init_savegame_data(save_version, 0);
+         result = savegame_read_from_file(fp, save_version);
+     }
+     file_close(fp);
+@@ -1926,7 +2022,7 @@ int game_file_io_read_saved_game_info(const char *filename, int offset, saved_ga
+         return SAVEGAME_STATUS_NEWER_VERSION;
+     }
+     resource_set_mapping(resource_version);
+-    init_savegame_data(save_version);
++    init_savegame_data(save_version, 0);
+     result = savegame_read_from_file(fp, save_version);
+     file_close(fp);
+     if (result != SAVEGAME_STATUS_OK) {
+@@ -1952,7 +2048,7 @@ int game_file_io_read_saved_game_info_from_buffer(buffer *buf, saved_game_info *
+         }
+         log_info("Savegame version", 0, save_version);
+         resource_set_mapping(resource_version);
+-        init_savegame_data(save_version);
++        init_savegame_data(save_version, 0);
+         result = savegame_read_from_buffer(buf, save_version);
+     }
+     if (!result) {
+@@ -1965,7 +2061,7 @@ int game_file_io_read_saved_game_info_from_buffer(buffer *buf, saved_game_info *
+ int game_file_io_write_saved_game(const char *filename)
+ {
+     resource_set_mapping(RESOURCE_CURRENT_VERSION);
+-    init_savegame_data(SAVE_GAME_CURRENT_VERSION);
++    init_savegame_data(SAVE_GAME_CURRENT_VERSION, 1);
+ 
+     log_info("Saving game", filename, 0);
+     savegame_save_to_state(&savegame_data.state);
+diff --git a/src/game/game.c b/src/game/game.c
+index c82f18f..85dee14 100644
+--- a/src/game/game.c
++++ b/src/game/game.c
+@@ -1,3 +1,4 @@
++#include "map/grid.h"
+ #include "game.h"
+ 
+ #include "assets/assets.h"
+@@ -135,6 +136,7 @@ int game_init(void)
+     building_properties_init();
+     load_augustus_messages();
+     sound_system_init();
++    map_grid_allocate_all();
+     game_state_init();
+     resource_init();
+     int actions = ACTION_NONE;
+diff --git a/src/game/save_version.h b/src/game/save_version.h
+index cc5ec51..be9bff0 100644
+--- a/src/game/save_version.h
++++ b/src/game/save_version.h
+@@ -47,7 +47,14 @@ If you are unsure about anything regarding the savegame versioning, please ask o
+ 
+ typedef enum {
+ 
+-    SAVE_GAME_CURRENT_VERSION = 0xc0,
++    SAVE_GAME_CURRENT_VERSION = 0xc2,
++    // Depuis 0xc2, les coordonnees des figures et des batiments sont stockees
++    // sur 16 bits et les offsets de grille sur 32 bits, ce qui permet des
++    // cartes arbitrairement grandes.
++    SAVE_GAME_LAST_SMALL_COORDINATES = 0xc1,
++    // Derniere version avec des grilles de carte de taille fixe (162x162).
++    // Depuis 0xc1, chaque piece de grille porte sa propre taille.
++    SAVE_GAME_LAST_STATIC_GRID_SIZE = 0xc0,
+ 
+     SAVE_GAME_LAST_ORIGINAL_LIMITS_VERSION = 0x66,
+     SAVE_GAME_LAST_SMALLER_IMAGE_ID_VERSION = 0x76,
+@@ -123,7 +130,9 @@ typedef enum {
+ } savegame_version_t;
+ 
+ typedef enum {
+-    SCENARIO_CURRENT_VERSION = 29,
++    SCENARIO_CURRENT_VERSION = 31,
++    // Depuis 31, coordonnees sur 16 bits et offsets de grille sur 32 bits.
++    SCENARIO_LAST_SMALL_COORDINATES = 30,
+ 
+     SCENARIO_VERSION_NONE = 0,
+     SCENARIO_LAST_UNVERSIONED = 1,
+@@ -153,7 +162,9 @@ typedef enum {
+     SCENARIO_LAST_LEGACY_TERRAIN = 25,
+     SCENARIO_LAST_NO_OUTSKIRTS = 26,
+     SCENARIO_LAST_NO_MORE_NATIVE_BUILDINGS = 27,
+-    SCENARIO_LAST_NO_BRIDGE_SPRITES = 28
++    SCENARIO_LAST_NO_BRIDGE_SPRITES = 28,
++    // Derniere version avec des grilles de carte de taille fixe (162x162).
++    SCENARIO_LAST_STATIC_GRID_SIZE = 29
+ } scenario_version_t;
+ 
+ typedef enum {
+diff --git a/src/graphics/screenshot.c b/src/graphics/screenshot.c
+index b29d722..b4fd5fd 100644
+--- a/src/graphics/screenshot.c
++++ b/src/graphics/screenshot.c
+@@ -292,8 +292,8 @@ static void create_full_city_screenshot(void)
+     int draw_cloud_shadows = config_get(CONFIG_UI_DRAW_CLOUD_SHADOWS);
+     config_set(CONFIG_UI_DRAW_CLOUD_SHADOWS, 0);
+ 
+-    int min_width = (GRID_SIZE * TILE_X_SIZE - city_width_pixels) / 2 + TILE_X_SIZE;
+-    int max_height = (GRID_SIZE * TILE_Y_SIZE + city_height_pixels) / 2;
++    int min_width = (map_grid_stride * TILE_X_SIZE - city_width_pixels) / 2 + TILE_X_SIZE;
++    int max_height = (map_grid_stride * TILE_Y_SIZE + city_height_pixels) / 2;
+     int min_height = max_height - city_height_pixels - TILE_Y_SIZE;
+     map_tile dummy_tile = { 0, 0, 0 };
+     int error = 0;
+diff --git a/src/map/aqueduct.c b/src/map/aqueduct.c
+index 68a444d..b7fc2a7 100644
+--- a/src/map/aqueduct.c
++++ b/src/map/aqueduct.c
+@@ -6,42 +6,66 @@
+ #define IMAGE_MASK 0x7f
+ 
+ static grid_u8 aqueduct;
++MAP_GRID_REGISTER(aqueduct, u8);
+ static grid_u8 aqueduct_backup;
+ 
++MAP_GRID_REGISTER(aqueduct_backup, u8);
++/* Les grilles d'aqueduc sont indexees directement : un offset hors limites
++ * (bord de carte, voisin calcule par addition) lisait hors du tampon alloue
++ * sur le tas. Toutes les entrees sont donc bornees ici. */
+ int map_aqueduct_has_water_access_at(int grid_offset)
+ {
++    if (!map_grid_is_valid_offset(grid_offset)) {
++        return 0;
++    }
+     return aqueduct.items[grid_offset] >> WATER_ACCESS_OFFSET;
+ }
+ 
+ int map_aqueduct_image_at(int grid_offset)
+ {
++    if (!map_grid_is_valid_offset(grid_offset)) {
++        return 0;
++    }
+     return aqueduct.items[grid_offset] & IMAGE_MASK;
+ }
+ 
+ void map_aqueduct_set_water_access(int grid_offset, int value)
+ {
++    if (!map_grid_is_valid_offset(grid_offset)) {
++        return;
++    }
+     aqueduct.items[grid_offset] = (value << WATER_ACCESS_OFFSET) | (aqueduct.items[grid_offset] & IMAGE_MASK);
+ }
+ 
+ void map_aqueduct_set_image(int grid_offset, int value)
+ {
++    if (!map_grid_is_valid_offset(grid_offset)) {
++        return;
++    }
+     aqueduct.items[grid_offset] = (aqueduct.items[grid_offset] & ~IMAGE_MASK) | value;
+ }
+ 
+ void map_aqueduct_remove(int grid_offset)
+ {
++    if (!map_grid_is_valid_offset(grid_offset)) {
++        return;
++    }
+     aqueduct.items[grid_offset] = 0;
+-    if (map_aqueduct_image_at(grid_offset + map_grid_delta(0, -1)) == 5) {
+-        map_aqueduct_set_image(grid_offset + map_grid_delta(0, -1), 1);
++    int up = map_grid_add_delta(grid_offset, 0, -1);
++    int right = map_grid_add_delta(grid_offset, 1, 0);
++    int down = map_grid_add_delta(grid_offset, 0, 1);
++    int left = map_grid_add_delta(grid_offset, -1, 0);
++    if (map_aqueduct_image_at(up) == 5) {
++        map_aqueduct_set_image(up, 1);
+     }
+-    if (map_aqueduct_image_at(grid_offset + map_grid_delta(1, 0)) == 6) {
+-        map_aqueduct_set_image(grid_offset + map_grid_delta(1, 0), 2);
++    if (map_aqueduct_image_at(right) == 6) {
++        map_aqueduct_set_image(right, 2);
+     }
+-    if (map_aqueduct_image_at(grid_offset + map_grid_delta(0, 1)) == 5) {
+-        map_aqueduct_set_image(grid_offset + map_grid_delta(0, 1), 3);
++    if (map_aqueduct_image_at(down) == 5) {
++        map_aqueduct_set_image(down, 3);
+     }
+-    if (map_aqueduct_image_at(grid_offset + map_grid_delta(-1, 0)) == 6) {
+-        map_aqueduct_set_image(grid_offset + map_grid_delta(-1, 0), 4);
++    if (map_aqueduct_image_at(left) == 6) {
++        map_aqueduct_set_image(left, 4);
+     }
+ }
+ 
+diff --git a/src/map/building.c b/src/map/building.c
+index 003256a..08f0cf8 100644
+--- a/src/map/building.c
++++ b/src/map/building.c
+@@ -10,14 +10,20 @@
+ #include "map/terrain.h"
+ 
+ static grid_u32 buildings_grid;
++MAP_GRID_REGISTER(buildings_grid, u32);
+ static grid_u8 damage_grid;
++MAP_GRID_REGISTER(damage_grid, u8);
+ static grid_u32 rubble_info_grid;
+ 
++MAP_GRID_REGISTER(rubble_info_grid, u32);
+ static grid_u32 buildings_grid_backup;
++MAP_GRID_REGISTER(buildings_grid_backup, u32);
+ static grid_u8 damage_grid_backup;
++MAP_GRID_REGISTER(damage_grid_backup, u8);
+ static grid_u32 rubble_info_grid_backup;
+ 
+ 
++MAP_GRID_REGISTER(rubble_info_grid_backup, u32);
+ unsigned int map_building_at(int grid_offset)
+ {
+     return map_grid_is_valid_offset(grid_offset) ? buildings_grid.items[grid_offset] : 0;
+diff --git a/src/map/data.h b/src/map/data.h
+index 93bad7a..f95ff1d 100644
+--- a/src/map/data.h
++++ b/src/map/data.h
+@@ -6,6 +6,7 @@ extern struct map_data_t {
+     int height;
+     int start_offset;
+     int border_size;
++    int stride; // pas de la grille allouee (>= width + bords)
+ } map_data;
+ 
+ #endif // MAP_DATA_H
+diff --git a/src/map/desirability.c b/src/map/desirability.c
+index 79f2cf5..a8ef51a 100644
+--- a/src/map/desirability.c
++++ b/src/map/desirability.c
+@@ -12,6 +12,7 @@
+ 
+ static grid_i8 desirability_grid;
+ 
++MAP_GRID_REGISTER(desirability_grid, i8);
+ void map_desirability_clear(void)
+ {
+     map_grid_clear_i8(desirability_grid.items);
+diff --git a/src/map/elevation.c b/src/map/elevation.c
+index 1df5619..577a5b6 100644
+--- a/src/map/elevation.c
++++ b/src/map/elevation.c
+@@ -6,14 +6,28 @@
+ 
+ static grid_u8 elevation;
+ 
++MAP_GRID_REGISTER(elevation, u8);
+ int map_elevation_at(int grid_offset)
+ {
+-    return elevation.items[grid_offset];
++    return map_grid_is_valid_offset(grid_offset) ? elevation.items[grid_offset] : 0;
+ }
+ 
+ void map_elevation_set(int grid_offset, int value)
+ {
+-    elevation.items[grid_offset] = value;
++    if (map_grid_is_valid_offset(grid_offset)) {
++        elevation.items[grid_offset] = value;
++    }
++}
++
++/* Lecture d'un voisin sans depasser la carte : sans bordure, une addition
++ * directe sortait du tampon (offset negatif) sur la premiere colonne/ligne. */
++static int neighbor_elevation(int grid_offset, int dx, int dy, int max)
++{
++    int neighbor = map_grid_add_delta(grid_offset, dx, dy);
++    if (!map_grid_is_valid_offset(neighbor)) {
++        return 0;
++    }
++    return elevation.items[neighbor] < max && map_terrain_get(neighbor) != TERRAIN_MAP_EDGE;
+ }
+ 
+ void map_elevation_clear(void)
+@@ -26,10 +40,10 @@ static void fix_cliff_tiles(int grid_offset)
+     // reduce elevation when the surrounding tiles are at least 2 lower
+     // treat edges as being equal elevations
+     int max = elevation.items[grid_offset] - 1;
+-    if ((elevation.items[grid_offset + map_grid_delta(-1, 0)] < max && map_terrain_get(grid_offset + map_grid_delta(-1, 0)) != TERRAIN_MAP_EDGE) ||
+-        (elevation.items[grid_offset + map_grid_delta(0, -1)] < max && map_terrain_get(grid_offset + map_grid_delta(0, -1)) != TERRAIN_MAP_EDGE) ||
+-        (elevation.items[grid_offset + map_grid_delta(1, 0)] < max && map_terrain_get(grid_offset + map_grid_delta(1, 0)) != TERRAIN_MAP_EDGE) ||
+-        (elevation.items[grid_offset + map_grid_delta(0, 1)] < max && map_terrain_get(grid_offset + map_grid_delta(0, 1)) != TERRAIN_MAP_EDGE)) {
++    if (neighbor_elevation(grid_offset, -1, 0, max) ||
++        neighbor_elevation(grid_offset, 0, -1, max) ||
++        neighbor_elevation(grid_offset, 1, 0, max) ||
++        neighbor_elevation(grid_offset, 0, 1, max)) {
+         elevation.items[grid_offset]--;
+     }
+ }
+diff --git a/src/map/figure.c b/src/map/figure.c
+index f7dd797..dfd7400 100644
+--- a/src/map/figure.c
++++ b/src/map/figure.c
+@@ -5,6 +5,7 @@
+ 
+ static grid_u16 figures;
+ 
++MAP_GRID_REGISTER(figures, u16);
+ static struct {
+     figure_category category;
+     int count;
+diff --git a/src/map/grid.c b/src/map/grid.c
+index 6ab0ec4..b60d3cc 100644
+--- a/src/map/grid.c
++++ b/src/map/grid.c
+@@ -5,62 +5,156 @@
+ #include "map/building.h"
+ #include "map/data.h"
+ 
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ 
+ 
+-#define OFFSET(x,y) (x + GRID_SIZE * y)
++#define OFFSET(x,y) (x + map_grid_stride * y)
+ 
+ struct map_data_t map_data;
+ 
+-static const int DIRECTION_DELTA[] = {
+-    -OFFSET(0,1), OFFSET(1,-1), 1, OFFSET(1,1), OFFSET(0,1), OFFSET(-1,1), -1, -OFFSET(1,1)
+-};
++int map_grid_stride = MAP_GRID_LEGACY_SIZE;
++int map_grid_tiles = MAP_GRID_LEGACY_SIZE * MAP_GRID_LEGACY_SIZE;
++int map_grid_expand_offset_x;
++int map_grid_expand_offset_y;
++int map_grid_expand_stride_delta;
+ 
+-static const int ADJACENT_OFFSETS[][29] = {
+-    {
+-        0
+-    },
+-    {//1x1
+-        OFFSET(0,-1),
+-        OFFSET(1,0),
+-        OFFSET(0,1),
+-        OFFSET(-1,0), 0
+-    },
+-    {//2x2
+-        OFFSET(0,-1), OFFSET(1,-1),
+-        OFFSET(2,0), OFFSET(2,1),
+-        OFFSET(1,2), OFFSET(0,2),
+-        OFFSET(-1,1), OFFSET(-1,0), 0
+-    },
+-    {//3x3
+-        OFFSET(0,-1), OFFSET(1,-1), OFFSET(2,-1),
+-        OFFSET(3,0), OFFSET(3,1), OFFSET(3,2),
+-        OFFSET(2,3), OFFSET(1,3), OFFSET(0,3),
+-        OFFSET(-1,2), OFFSET(-1,1), OFFSET(-1,0), 0
+-    },
+-    {//4x4
+-        OFFSET(0,-1), OFFSET(1,-1), OFFSET(2,-1), OFFSET(3,-1),
+-        OFFSET(4,0), OFFSET(4,1), OFFSET(4,2), OFFSET(4,3),
+-        OFFSET(3,4), OFFSET(2,4), OFFSET(1,4), OFFSET(0,4),
+-        OFFSET(-1,3), OFFSET(-1,2), OFFSET(-1,1), OFFSET(-1,0), 0
+-    },
+-    {//5x5
+-        OFFSET(0,-1), OFFSET(1,-1), OFFSET(2,-1), OFFSET(3,-1), OFFSET(4,-1),
+-        OFFSET(5,0), OFFSET(5,1), OFFSET(5,2), OFFSET(5,3), OFFSET(5,4),
+-        OFFSET(4,5), OFFSET(3,5), OFFSET(2,5), OFFSET(1,5), OFFSET(0,5),
+-        OFFSET(-1,4), OFFSET(-1,3), OFFSET(-1,2), OFFSET(-1,1), OFFSET(-1,0), 0
+-    },
+-    {//6x6
+-        0
+-    },
+-    {//7x7
+-        OFFSET(0,-1), OFFSET(1,-1), OFFSET(2,-1), OFFSET(3,-1), OFFSET(4,-1), OFFSET(5,-1), OFFSET(6,-1),
+-        OFFSET(7,0), OFFSET(7,1), OFFSET(7,2), OFFSET(7,3), OFFSET(7,4), OFFSET(7,5), OFFSET(7,6),
+-        OFFSET(6,7), OFFSET(5,7), OFFSET(4,7), OFFSET(3,7), OFFSET(2,7), OFFSET(1,7), OFFSET(0,7),
+-        OFFSET(-1,6), OFFSET(-1,5), OFFSET(-1,4), OFFSET(-1,3), OFFSET(-1,2), OFFSET(-1,1), OFFSET(-1,0), 0
+-    }
+-};
++/* --- Registre des grilles allouees sur le tas --- */
++#define MAP_GRID_MAX_REGISTRATIONS 128
++
++static struct {
++    void **slot;
++    size_t element_size;
++    int allocated_tiles; // nombre de tuiles pour lequel le tampon a ete alloue
++} grid_registry[MAP_GRID_MAX_REGISTRATIONS];
++static int grid_registry_count;
++
++void map_grid_register(void **slot, size_t element_size)
++{
++    for (int i = 0; i < grid_registry_count; i++) {
++        if (grid_registry[i].slot == slot) {
++            return;
++        }
++    }
++    if (grid_registry_count >= MAP_GRID_MAX_REGISTRATIONS) {
++        log_error("Too many map grids registered", 0, 0);
++        return;
++    }
++    grid_registry[grid_registry_count].slot = slot;
++    grid_registry[grid_registry_count].element_size = element_size;
++    grid_registry[grid_registry_count].allocated_tiles = 0;
++    grid_registry_count++;
++}
++
++/*
++ * Alloue une grille du registre.
++ * Si la geometrie n'a pas change, le tampon existant est conserve : les
++ * donnees deja chargees (scenario ou sauvegarde) ne doivent pas etre effacees
++ * par un appel tardif a map_grid_init/scenario_map_init.
++ */
++static void grid_allocate_entry(int index)
++{
++    void **slot = grid_registry[index].slot;
++    if (*slot && grid_registry[index].allocated_tiles == map_grid_tiles) {
++        return;
++    }
++    if (*slot) {
++        free(*slot);
++        *slot = NULL;
++    }
++    size_t bytes = (size_t) map_grid_tiles * grid_registry[index].element_size;
++    *slot = calloc(1, bytes ? bytes : 1);
++    if (!*slot) {
++        log_error("Out of memory allocating map grid", 0, 0);
++        exit(1);
++    }
++    grid_registry[index].allocated_tiles = map_grid_tiles;
++}
++
++void map_grid_allocate_all(void)
++{
++    for (int i = 0; i < grid_registry_count; i++) {
++        grid_allocate_entry(i);
++    }
++}
++
++void map_grid_release_all(void)
++{
++    for (int i = 0; i < grid_registry_count; i++) {
++        if (*grid_registry[i].slot) {
++            free(*grid_registry[i].slot);
++            *grid_registry[i].slot = NULL;
++        }
++        grid_registry[i].allocated_tiles = 0;
++    }
++}
++
++void *map_grid_items(void **slot, size_t element_size)
++{
++    map_grid_register(slot, element_size);
++    for (int i = 0; i < grid_registry_count; i++) {
++        if (grid_registry[i].slot == slot) {
++            grid_allocate_entry(i);
++            break;
++        }
++    }
++    return *slot;
++}
++
++static int direction_delta[8];
++
++/* Voisinage orthogonal/diagonal, dependant du pas de la grille. */
++static void compute_direction_delta(void)
++{
++    int s = map_grid_stride;
++    direction_delta[0] = -s;
++    direction_delta[1] = 1 - s;
++    direction_delta[2] = 1;
++    direction_delta[3] = 1 + s;
++    direction_delta[4] = s;
++    direction_delta[5] = s - 1;
++    direction_delta[6] = -1;
++    direction_delta[7] = -1 - s;
++}
++
++/* Anneau de voisinage pour les tailles 1..7, construit a l'execution. */
++static int adjacent_offsets[8][29];
++
++static void compute_adjacent_offsets(void)
++{
++    for (int i = 0; i < 8; i++) {
++        for (int j = 0; j < 29; j++) {
++            adjacent_offsets[i][j] = 0;
++        }
++    }
++    for (int size = 1; size <= 7; size++) {
++        if (size == 6) {
++            continue; // conserve le comportement historique (anneau vide)
++        }
++        int *dst = adjacent_offsets[size];
++        int n = 0;
++        for (int x = 0; x < size; x++) {
++            dst[n++] = OFFSET(x, -1);
++        }
++        for (int y = 0; y < size; y++) {
++            dst[n++] = OFFSET(size, y);
++        }
++        for (int x = size - 1; x >= 0; x--) {
++            dst[n++] = OFFSET(x, size);
++        }
++        for (int y = size - 1; y >= 0; y--) {
++            dst[n++] = OFFSET(-1, y);
++        }
++        dst[n] = 0;
++    }
++}
++
++static void compute_grid_offsets(void)
++{
++    compute_direction_delta();
++    compute_adjacent_offsets();
++}
+ 
+ /* --- Slice pool (100 entries) with ring eviction --- */
+ #define GRID_SLICE_POOL_CAP 100
+@@ -68,15 +162,40 @@ static grid_slice grid_slice_pool[GRID_SLICE_POOL_CAP];
+ static uint8_t grid_slice_pool_used[GRID_SLICE_POOL_CAP];
+ static int grid_slice_pool_next = 0;
+ 
++/* Zone de travail partagee pour construire un slice avant de le valider. */
++static int *grid_slice_scratch_buffer;
++static int grid_slice_scratch_capacity;
++
++static int *grid_slice_scratch(void)
++{
++    if (grid_slice_scratch_capacity != map_grid_tiles) {
++        free(grid_slice_scratch_buffer);
++        grid_slice_scratch_buffer = malloc(sizeof(int) * (size_t) map_grid_tiles);
++        grid_slice_scratch_capacity = map_grid_tiles;
++    }
++    return grid_slice_scratch_buffer;
++}
++
++static void grid_slice_pool_reset(void)
++{
++    for (int i = 0; i < GRID_SLICE_POOL_CAP; i++) {
++        free(grid_slice_pool[i].grid_offsets);
++        grid_slice_pool[i].grid_offsets = NULL;
++        grid_slice_pool[i].size = 0;
++        grid_slice_pool[i].capacity = 0;
++        grid_slice_pool_used[i] = 0;
++    }
++    grid_slice_pool_next = 0;
++}
++
+ static grid_slice *grid_slice_pool_commit(const int *offsets, int count)
+ {
+     if (count < 0) {
+         count = 0;
+     }
+-    if (count > MAX_SLICE_SIZE) {
+-        count = MAX_SLICE_SIZE;
++    if (count > map_grid_tiles) {
++        count = map_grid_tiles;
+     }
+-    /* find free slot first */
+     int slot = -1;
+     for (int i = 0; i < GRID_SLICE_POOL_CAP; i++) {
+         if (!grid_slice_pool_used[i]) {
+@@ -85,30 +204,134 @@ static grid_slice *grid_slice_pool_commit(const int *offsets, int count)
+         }
+     }
+ 
+-    /* none free -> evict oldest (ring) */
++    /* none free -> evict oldest (ring) and release its memory */
+     if (slot == -1) {
+         slot = grid_slice_pool_next;
+         grid_slice_pool_next = (grid_slice_pool_next + 1) % GRID_SLICE_POOL_CAP;
++        free(grid_slice_pool[slot].grid_offsets);
++        grid_slice_pool[slot].grid_offsets = NULL;
++        grid_slice_pool[slot].capacity = 0;
+     }
+ 
+     grid_slice_pool_used[slot] = 1;
+     grid_slice *s = &grid_slice_pool[slot];
++    if (s->capacity < count) {
++        int *grown = realloc(s->grid_offsets, sizeof(int) * (size_t) count);
++        if (!grown) {
++            s->size = 0;
++            return s;
++        }
++        s->grid_offsets = grown;
++        s->capacity = count;
++    }
+     s->size = count;
+-
+-    /* copy exactly count entries */
+-    for (int i = 0; i < count; i++) {
+-        s->grid_offsets[i] = offsets[i];
++    if (count > 0 && s->grid_offsets) {
++        memcpy(s->grid_offsets, offsets, sizeof(int) * (size_t) count);
+     }
+-
+     return s;
+ }
+ 
++int map_grid_expand(int size)
++{
++    if (size <= map_data.width && size <= map_data.height) {
++        return 0;
++    }
++    if (size > MAP_GRID_MAX_DIMENSION) {
++        size = MAP_GRID_MAX_DIMENSION;
++    }
++    int old_stride = map_grid_stride;
++    int old_start = map_data.start_offset;
++    int width = map_data.width;
++    int height = map_data.height;
++    int new_tiles = size * size;
++    int offset_x = (size - width) / 2;
++    int offset_y = (size - height) / 2;
++    map_grid_expand_offset_x = offset_x;
++    map_grid_expand_offset_y = offset_y;
++    map_grid_expand_stride_delta = size - map_grid_stride;
++
++    /* Toutes les grilles enregistrees sont transposees dans la nouvelle
++     * geometrie : la carte d'origine reste au centre, le reste est vierge. */
++    for (int i = 0; i < grid_registry_count; i++) {
++        void **slot = grid_registry[i].slot;
++        if (!*slot) {
++            continue;
++        }
++        size_t element_size = grid_registry[i].element_size;
++        uint8_t *new_data = calloc((size_t) new_tiles, element_size);
++        if (!new_data) {
++            log_error("Out of memory expanding the map grid", 0, 0);
++            return 0;
++        }
++        const uint8_t *src = (const uint8_t *) *slot;
++        for (int y = 0; y < height; y++) {
++            size_t src_row = (size_t) (old_start + y * old_stride) * element_size;
++            size_t dst_row = (size_t) ((offset_y + y) * size + offset_x) * element_size;
++            memcpy(new_data + dst_row, src + src_row, (size_t) width * element_size);
++        }
++        free(*slot);
++        *slot = new_data;
++        grid_registry[i].allocated_tiles = new_tiles;
++    }
++
++    map_grid_stride = size;
++    map_grid_tiles = new_tiles;
++    map_data.width = size;
++    map_data.height = size;
++    map_data.border_size = 0;
++    map_data.start_offset = 0;
++    map_data.stride = size;
++    grid_slice_pool_reset();
++    compute_grid_offsets();
++    return 1;
++}
++
+ void map_grid_init(int width, int height, int start_offset, int border_size)
+ {
+-    map_data.width = width;
+-    map_data.height = height;
+-    map_data.start_offset = start_offset;
+-    map_data.border_size = border_size;
++    (void) start_offset;
++
++    map_data.width = width > 0 ? width : MAP_GRID_LEGACY_SIZE;
++    map_data.height = height > 0 ? height : MAP_GRID_LEGACY_SIZE;
++
++    if (border_size < 0) {
++        border_size = MAP_GRID_MIN_BORDER * 2;
++    }
++
++    int stride = map_data.width + border_size;
++    if (stride < map_data.height + border_size) {
++        stride = map_data.height + border_size;
++    }
++    if (stride < MAP_GRID_LEGACY_SIZE) {
++        stride = MAP_GRID_LEGACY_SIZE;
++    }
++    if (stride > MAP_GRID_MAX_DIMENSION) {
++        log_error("Map grid dimension exceeded the maximum, clamped", 0, 0);
++        stride = MAP_GRID_MAX_DIMENSION;
++    }
++
++    map_data.border_size = border_size > 0 ? border_size : stride - map_data.width;
++
++    /* La carte est centree dans la grille allouee, comme dans Caesar 3. Pour
++     * les fichiers existants, l'offset fourni est utilise tel quel : il est
++     * solidaire du pas de grille et doit rester identique a l'original. */
++    if (start_offset > 0 && start_offset < stride * stride) {
++        map_data.start_offset = start_offset;
++    } else {
++        int x_offset = (stride - map_data.width) / 2;
++        int y_offset = (stride - map_data.height) / 2;
++        map_data.start_offset = y_offset * stride + x_offset;
++    }
++    map_data.stride = stride;
++
++    if (stride != map_grid_stride) {
++        map_grid_stride = stride;
++        map_grid_tiles = stride * stride;
++        grid_slice_pool_reset();
++    }
++    /* Les offsets de voisinage dependent du pas : ils doivent etre calcules
++     * meme quand la taille ne change pas (premier chargement a 162). */
++    compute_grid_offsets();
++    map_grid_allocate_all();
+ }
+ 
+ /* allocate from pool based on already computed offsets */
+@@ -173,7 +396,7 @@ grid_slice *map_grid_get_grid_slice_rectangle(int start_grid_offset, int width,
+     int x = map_grid_offset_to_x(start_grid_offset);
+     int y = map_grid_offset_to_y(start_grid_offset);
+ 
+-    int tmp[MAX_SLICE_SIZE];
++    int *tmp = grid_slice_scratch();
+     int count = 0;
+ 
+     for (int i = 0; i < height; i++) {
+@@ -194,7 +417,7 @@ grid_slice *map_grid_get_grid_slice_rectangle(int start_grid_offset, int width,
+ 
+ grid_slice *map_grid_get_grid_slice_house(unsigned int building_id, int check_rubble)
+ {
+-    int tmp[MAX_SLICE_SIZE];
++    int *tmp = grid_slice_scratch();
+     int count = 0;
+ 
+     building *b = building_get(building_id);
+@@ -226,7 +449,7 @@ grid_slice *map_grid_get_grid_slice_ring(int center_grid_offset, int inner_radiu
+ {
+     int center_x = map_grid_offset_to_x(center_grid_offset);
+     int center_y = map_grid_offset_to_y(center_grid_offset);
+-    int tmp[MAX_SLICE_SIZE];
++    int *tmp = grid_slice_scratch();
+     int count = 0;
+ 
+     for (int dy = -outer_radius; dy <= outer_radius; dy++) {
+@@ -243,7 +466,7 @@ grid_slice *map_grid_get_grid_slice_ring(int center_grid_offset, int inner_radiu
+                 if (x < 0 || y < 0) {
+                     continue;
+                 }
+-                if (x > GRID_SIZE || y > GRID_SIZE) {
++                if (x > map_grid_stride || y > map_grid_stride) {
+                     continue;
+                 }
+                 int offset = map_grid_offset(x, y);
+@@ -277,44 +500,66 @@ grid_slice *map_grid_slice_contains(int grid_offset, grid_slice *slice)
+ 
+ int map_grid_is_valid_offset(int grid_offset)
+ {
+-    return grid_offset >= 0 && grid_offset < GRID_SIZE * GRID_SIZE;
++    return grid_offset >= 0 && grid_offset < map_grid_tiles;
+ }
+ 
+ int map_grid_offset(int x, int y)
+ {
+-    return map_data.start_offset + x + y * GRID_SIZE;
++    return map_data.start_offset + x + y * map_grid_stride;
+ }
+ 
+ int map_grid_offset_to_x(int grid_offset)
+ {
+-    return (grid_offset - map_data.start_offset) % GRID_SIZE;
++    return (grid_offset - map_data.start_offset) % map_grid_stride;
+ }
+ 
+ int map_grid_offset_to_y(int grid_offset)
+ {
+-    return (grid_offset - map_data.start_offset) / GRID_SIZE;
++    return (grid_offset - map_data.start_offset) / map_grid_stride;
+ }
+ 
+ int map_grid_delta(int x, int y)
+ {
+-    return y * GRID_SIZE + x;
++    return y * map_grid_stride + x;
++}
++
++/* Les tables historiques expriment leurs decalages dans une grille de 162
++ * tuiles de cote. Sur une carte agrandie ces valeurs doivent etre
++ * converties vers le pas reellement utilise, sinon les voisins calcules
++ * tombent sur la mauvaise ligne. */
++int map_grid_convert_legacy_offset(int legacy_offset)
++{
++    int x = legacy_offset % MAP_GRID_LEGACY_SIZE;
++    int y = legacy_offset / MAP_GRID_LEGACY_SIZE;
++    return x + map_grid_stride * y;
++}
++
++int map_grid_add_legacy_offset(int grid_offset, int legacy_offset)
++{
++    int delta_x = legacy_offset % MAP_GRID_LEGACY_SIZE;
++    int delta_y = legacy_offset / MAP_GRID_LEGACY_SIZE;
++    return map_grid_add_delta(grid_offset, delta_x, delta_y);
+ }
+ 
+ int map_grid_add_delta(int grid_offset, int x, int y)
+ {
+-    int raw_x = grid_offset % GRID_SIZE;
+-    int raw_y = grid_offset / GRID_SIZE;
+-    if (raw_x + x < 0 || raw_x + x >= GRID_SIZE ||
+-        raw_y + y < 0 || raw_y + y >= GRID_SIZE) {
++    if (!map_grid_is_valid_offset(grid_offset)) {
++        return -1;
++    }
++    int current_x = map_grid_offset_to_x(grid_offset);
++    int current_y = map_grid_offset_to_y(grid_offset);
++    int new_x = current_x + x;
++    int new_y = current_y + y;
++    if (new_x < 0 || new_x >= map_grid_stride || new_y < 0 || new_y >= map_grid_stride) {
+         return -1;
+     }
+-    return grid_offset + map_grid_delta(x, y);
++    return map_grid_offset(new_x, new_y);
+ }
+ 
+ int map_grid_direction_delta(int direction)
+ {
+     if (direction >= 0 && direction < 8) {
+-        return DIRECTION_DELTA[direction];
++        return direction_delta[direction];
+     } else {
+         return 0;
+     }
+@@ -417,7 +662,7 @@ int map_grid_is_inside(int x, int y, int size)
+ 
+ const int *map_grid_adjacent_offsets(int size)
+ {
+-    return ADJACENT_OFFSETS[size];
++    return adjacent_offsets[size];
+ }
+ 
+ void map_grid_get_corner_tiles(int start_x, int start_y, int x, int y, int *c1x, int *c1y, int *c2x, int *c2y)
+@@ -437,128 +682,138 @@ void map_grid_get_corner_tiles(int start_x, int start_y, int x, int y, int *c1x,
+ 
+ void map_grid_clear_i8(int8_t *grid)
+ {
+-    memset(grid, 0, GRID_SIZE * GRID_SIZE * sizeof(int8_t));
++    memset(grid, 0, map_grid_tiles * sizeof(int8_t));
+ }
+ 
+ void map_grid_clear_u8(uint8_t *grid)
+ {
+-    memset(grid, 0, GRID_SIZE * GRID_SIZE * sizeof(uint8_t));
++    memset(grid, 0, map_grid_tiles * sizeof(uint8_t));
+ }
+ 
+ void map_grid_clear_u16(uint16_t *grid)
+ {
+-    memset(grid, 0, GRID_SIZE * GRID_SIZE * sizeof(uint16_t));
++    memset(grid, 0, map_grid_tiles * sizeof(uint16_t));
+ }
+ 
+ void map_grid_clear_u32(uint32_t *grid)
+ {
+-    memset(grid, 0, GRID_SIZE * GRID_SIZE * sizeof(uint32_t));
++    memset(grid, 0, map_grid_tiles * sizeof(uint32_t));
+ }
+ 
+ void map_grid_clear_i16(int16_t *grid)
+ {
+-    memset(grid, 0, GRID_SIZE * GRID_SIZE * sizeof(int16_t));
++    memset(grid, 0, map_grid_tiles * sizeof(int16_t));
+ }
+ 
+ void map_grid_init_i8(int8_t *grid, int8_t value)
+ {
+-    memset(grid, value, GRID_SIZE * GRID_SIZE * sizeof(int8_t));
++    memset(grid, value, map_grid_tiles * sizeof(int8_t));
+ }
+ 
+ void map_grid_and_u8(uint8_t *grid, uint8_t mask)
+ {
+-    for (int i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
++    for (int i = 0; i < map_grid_tiles; i++) {
+         grid[i] &= mask;
+     }
+ }
+ 
+ void map_grid_and_u16(uint16_t *grid, uint16_t mask)
+ {
+-    for (int i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
++    for (int i = 0; i < map_grid_tiles; i++) {
+         grid[i] &= mask;
+     }
+ }
+ 
+ void map_grid_and_u32(uint32_t *grid, uint32_t mask)
+ {
+-    for (int i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
++    for (int i = 0; i < map_grid_tiles; i++) {
+         grid[i] &= mask;
+     }
+ }
+ 
+ void map_grid_copy_u8(const uint8_t *src, uint8_t *dst)
+ {
+-    memcpy(dst, src, GRID_SIZE * GRID_SIZE * sizeof(uint8_t));
++    memcpy(dst, src, map_grid_tiles * sizeof(uint8_t));
+ }
+ 
+ void map_grid_copy_u16(const uint16_t *src, uint16_t *dst)
+ {
+-    memcpy(dst, src, GRID_SIZE * GRID_SIZE * sizeof(uint16_t));
++    memcpy(dst, src, map_grid_tiles * sizeof(uint16_t));
+ }
+ 
+ void map_grid_copy_u32(const uint32_t *src, uint32_t *dst)
+ {
+-    memcpy(dst, src, GRID_SIZE * GRID_SIZE * sizeof(uint32_t));
++    memcpy(dst, src, map_grid_tiles * sizeof(uint32_t));
+ }
+ 
+ void map_grid_save_state_u8(const uint8_t *grid, buffer *buf)
+ {
+-    buffer_write_raw(buf, grid, GRID_SIZE * GRID_SIZE);
++    buffer_write_raw(buf, grid, map_grid_tiles);
+ }
+ 
+ void map_grid_save_state_i8(const int8_t *grid, buffer *buf)
+ {
+-    buffer_write_raw(buf, grid, GRID_SIZE * GRID_SIZE);
++    buffer_write_raw(buf, grid, map_grid_tiles);
+ }
+ 
+ void map_grid_save_state_u16(const uint16_t *grid, buffer *buf)
+ {
+-    for (int i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
++    for (int i = 0; i < map_grid_tiles; i++) {
+         buffer_write_u16(buf, grid[i]);
+     }
+ }
+ 
+ void map_grid_save_state_u32_to_u16(const uint32_t *grid, buffer *buf)
+ {
+-    for (int i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
++    for (int i = 0; i < map_grid_tiles; i++) {
+         buffer_write_u16(buf, (uint16_t) grid[i]);
+     }
+ }
+ 
+ void map_grid_save_state_u32(const uint32_t *grid, buffer *buf)
+ {
+-    for (int i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
++    for (int i = 0; i < map_grid_tiles; i++) {
+         buffer_write_u32(buf, grid[i]);
+     }
+ }
+ 
+ void map_grid_load_state_u8(uint8_t *grid, buffer *buf)
+ {
+-    buffer_read_raw(buf, grid, GRID_SIZE * GRID_SIZE);
++    buffer_read_raw(buf, grid, map_grid_tiles);
+ }
+ 
+ void map_grid_load_state_i8(int8_t *grid, buffer *buf)
+ {
+-    buffer_read_raw(buf, grid, GRID_SIZE * GRID_SIZE);
++    buffer_read_raw(buf, grid, map_grid_tiles);
+ }
+ 
+ void map_grid_load_state_u16(uint16_t *grid, buffer *buf)
+ {
+-    for (int i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
++    for (int i = 0; i < map_grid_tiles; i++) {
+         grid[i] = buffer_read_u16(buf);
+     }
+ }
+ 
+ void map_grid_load_state_u16_to_u32(uint32_t *grid, buffer *buf)
+ {
+-    for (int i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
++    for (int i = 0; i < map_grid_tiles; i++) {
+         grid[i] = buffer_read_u16(buf);
+     }
+ }
+ 
+ void map_grid_load_state_u32(uint32_t *grid, buffer *buf)
+ {
+-    for (int i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
++    for (int i = 0; i < map_grid_tiles; i++) {
+         grid[i] = buffer_read_u32(buf);
+     }
+ }
++
++int map_grid_get_stride(void)
++{
++    return map_grid_stride;
++}
++
++int map_grid_get_tile_count(void)
++{
++    return map_grid_tiles;
++}
+diff --git a/src/map/grid.h b/src/map/grid.h
+index ed8a489..d77aee8 100644
+--- a/src/map/grid.h
++++ b/src/map/grid.h
+@@ -3,46 +3,154 @@
+ 
+ #include "core/buffer.h"
+ 
++#include <stddef.h>
+ #include <stdint.h>
+ 
+-enum {
+-    GRID_SIZE = 162
+-};
+-#define MAX_SLICE_SIZE GRID_SIZE * GRID_SIZE 
++/**
++ * Taille historique d'une grille Caesar 3 : 162x162 tuiles, bords compris.
++ *
++ * Cette valeur n'est plus une limite structurelle : elle sert uniquement de
++ * taille par defaut et de repere pour la compatibilite des formats de fichier
++ * existants (sauvegardes et scenarios originaux, qui ne contiennent aucune
++ * dimension et supposent donc 162x162).
++ */
++#define MAP_GRID_LEGACY_SIZE 162
++
++
++/*
++ * Taille historique utilisee UNIQUEMENT par les tables de voisinage
++ * precalculees au chargement du programme (initialiseurs statiques), qui ne
++ * peuvent pas dependre du pas d'execution. Ces tables devront etre converties
++ * en calculs dynamiques pour que les cartes plus grandes soient exactes.
++ */
++#define MAP_GRID_STATIC_STRIDE MAP_GRID_LEGACY_SIZE
++#define MAP_GRID_STATIC_TILES (MAP_GRID_LEGACY_SIZE * MAP_GRID_LEGACY_SIZE)
++
++/** Marge minimale (en tuiles) entre la zone jouable et le bord de la grille. */
++#define MAP_GRID_MIN_BORDER 2
++
++/** Garde-fou superieur sur un cote de grille (la vraie limite est la RAM). */
++#define MAP_GRID_MAX_DIMENSION 8192
++
++/**
++ * Cote (en tuiles) vers lequel les cartes de scenario sont etendues au
++ * chargement. La carte d'origine est centree dans cette grille et le reste
++ * est rempli de terre constructible.
++ */
++#define MAP_GRID_EXPANDED_SIZE 512
++
++/**
++ * Pas de la grille allouee : nombre de tuiles par ligne.
++ *
++ * C'est l'ancien GRID_SIZE, mais connu a l'execution. Toute l'arithmetique
++ * d'offsets (voisinage, lignes, colonnes) doit passer par cette valeur.
++ */
++extern int map_grid_stride;
++
++/** Nombre total de tuiles allouees (map_grid_stride * map_grid_stride). */
++extern int map_grid_tiles;
++
++/** Ancien MAX_SLICE_SIZE, desormais egal au nombre de tuiles allouees. */
++#define MAX_SLICE_SIZE (map_grid_tiles)
++
+ /**
+  * Represents a collection of grid offsets
+  *
+  * Used to store multiple grid coordinates as a contiguous array of offsets,
+  * for operations on groups of tiles - allows easy iteration through uneven shapes
+  *
+- * @var grid_offsets Array containing the grid offset positions
++ * @var grid_offsets Array containing the grid offset positions (heap allocated)
+  * @var size 1-based count of valid entries in grid_offsets, 0 means empty arrray, 1 means [0] is valid, etc.
++ * @var capacity Number of entries actually allocated in grid_offsets
+  */
+ typedef struct grid_slice {
+-    int grid_offsets[MAX_SLICE_SIZE];
++    int *grid_offsets;
+     int size;
++    int capacity;
+ } grid_slice;
+ 
++/*
++ * Les grilles sont des vues sur des tableaux alloues sur le tas.
++ * Le champ "items" garde exactement le meme nom et le meme usage qu'avant,
++ * donc tout le code qui fait grid.items[offset] reste valide.
++ */
+ typedef struct {
+-    uint8_t items[GRID_SIZE * GRID_SIZE];
++    uint8_t *items;
+ } grid_u8;
+ 
+ typedef struct {
+-    int8_t items[GRID_SIZE * GRID_SIZE];
++    int8_t *items;
+ } grid_i8;
+ 
+ typedef struct {
+-    uint16_t items[GRID_SIZE * GRID_SIZE];
++    uint16_t *items;
+ } grid_u16;
+ 
+ typedef struct {
+-    int16_t items[GRID_SIZE * GRID_SIZE];
++    int16_t *items;
+ } grid_i16;
+ 
+ typedef struct {
+-    uint32_t items[GRID_SIZE * GRID_SIZE];
++    uint32_t *items;
+ } grid_u32;
+ 
++/**
++ * Enregistre une grille aupres de l'allocateur de carte.
++ *
++ * A appeler une seule fois par grille, idealement via la macro
++ * MAP_GRID_REGISTER placee juste apres la declaration de la grille.
++ * L'allocateur (re)alloue et vide toutes les grilles enregistrees a chaque
++ * changement de taille de carte.
++ */
++void map_grid_register(void **slot, size_t element_size);
++
++/** Alloue (ou realloue) toutes les grilles enregistrees et les remet a zero. */
++void map_grid_allocate_all(void);
++
++/**
++ * Etend la carte a une grille carree de `size` cotes.
++ * Le contenu existant est conserve et centre ; la nouvelle surface est videe.
++ * @return 1 si la carte a ete etendue, 0 si elle etait deja assez grande
++ */
++int map_grid_expand(int size);
++
++/** Decalage applique au contenu existant par le dernier map_grid_expand. */
++extern int map_grid_expand_offset_x;
++extern int map_grid_expand_offset_y;
++extern int map_grid_expand_stride_delta;
++
++/** Libere toutes les grilles enregistrees. */
++void map_grid_release_all(void);
++
++/** Retourne la grille allouee, en l'allouant si necessaire. */
++void *map_grid_items(void **slot, size_t element_size);
++
++#define MAP_GRID_CONCAT_(a, b) a##b
++#define MAP_GRID_CONCAT(a, b) MAP_GRID_CONCAT_(a, b)
++
++/*
++ * Enregistrement automatique au demarrage.
++ * GCC/Clang utilisent l'attribut constructor ; MSVC utilise la meme mecanique
++ * que le CRT (.CRT$XCU), donc le code reste portable.
++ */
++#if defined(_MSC_VER)
++#define MAP_GRID_REGISTER(name, type)                                                                   \
++    static void MAP_GRID_CONCAT(map_grid_register_, __LINE__)(void);                                    \
++    __declspec(allocate(".CRT$XCU")) static void (*MAP_GRID_CONCAT(map_grid_ctor_, __LINE__))(void) =   \
++        MAP_GRID_CONCAT(map_grid_register_, __LINE__);                                                  \
++    static void MAP_GRID_CONCAT(map_grid_register_, __LINE__)(void)                                     \
++    {                                                                                                   \
++        map_grid_register((void **) &(name).items, sizeof((name).items[0]));                                       \
++    }
++#else
++#define MAP_GRID_REGISTER(name, type)                                                                   \
++    static void MAP_GRID_CONCAT(map_grid_register_, __LINE__)(void) __attribute__((constructor));        \
++    static void MAP_GRID_CONCAT(map_grid_register_, __LINE__)(void)                                     \
++    {                                                                                                   \
++        map_grid_register((void **) &(name).items, sizeof((name).items[0]));                                       \
++    }
++#endif
++
+ void map_grid_init(int width, int height, int start_offset, int border_size);
+ 
+ grid_slice *map_grid_get_grid_slice(int *grid_offsets, int size);
+@@ -70,6 +178,12 @@ int map_grid_delta(int x, int y);
+  */
+ int map_grid_add_delta(int grid_offset, int x, int y);
+ 
++/** Convertit un decalage calcule pour la grille historique 162x162 vers la grille courante. */
++int map_grid_convert_legacy_offset(int legacy_offset);
++
++/** Applique un offset historique en respectant les limites X/Y de la grille. */
++int map_grid_add_legacy_offset(int grid_offset, int legacy_offset);
++
+ int map_grid_direction_delta(int direction);
+ 
+ int map_grid_chess_distance(int offset1, int offset2);
+diff --git a/src/map/image.c b/src/map/image.c
+index 2c57627..0f1c2d3 100644
+--- a/src/map/image.c
++++ b/src/map/image.c
+@@ -12,17 +12,23 @@
+ #include "map/tiles.h"
+ 
+ static grid_u32 images;
++MAP_GRID_REGISTER(images, u32);
+ static grid_u32 images_backup;
+ 
++MAP_GRID_REGISTER(images_backup, u32);
+ // Marshland and Beach are drawn as an OVERLAY on top of the native terrain tile (which keeps its own image),
+ // so their image ids are stored in separate grids rather than overwriting the terrain image. 0 = no
+ // overlay on the tile. These grids are derived from the TERRAIN_MARSHLAND and TERRAIN_BEACH flags and recomputed
+ // on load/rotation/climate change, so they are not part of the save format.
+ static grid_u32 marsh_images;
++MAP_GRID_REGISTER(marsh_images, u32);
+ static grid_u32 marsh_images_backup;
++MAP_GRID_REGISTER(marsh_images_backup, u32);
+ static grid_u32 beach_images;
++MAP_GRID_REGISTER(beach_images, u32);
+ static grid_u32 beach_images_backup;
+ 
++MAP_GRID_REGISTER(beach_images_backup, u32);
+ unsigned int map_marsh_image_at(int grid_offset)
+ {
+     return marsh_images.items[grid_offset];
+@@ -75,12 +81,16 @@ void map_beach_image_clear(void)
+ 
+ unsigned int map_image_at(int grid_offset)
+ {
+-    return images.items[grid_offset];
++    return map_grid_is_valid_offset(grid_offset) ? images.items[grid_offset] : 0;
+ }
+ 
++/* Les grilles sont sur le tas : ecrire a un offset hors limites corrompt la
++ * memoire du processus. Les offsets arrivent souvent d'un calcul de voisinage. */
+ void map_image_set(int grid_offset, int image_id)
+ {
+-    images.items[grid_offset] = image_id;
++    if (map_grid_is_valid_offset(grid_offset)) {
++        images.items[grid_offset] = image_id;
++    }
+ }
+ 
+ void map_image_set_with_backup(int grid_offset, int image_id)
+diff --git a/src/map/property.c b/src/map/property.c
+index f97e6cd..758ca11 100644
+--- a/src/map/property.c
++++ b/src/map/property.c
+@@ -3,6 +3,8 @@
+ #include "map/grid.h"
+ #include "map/random.h"
+ 
++#include <stdlib.h>
++
+ enum {
+     BIT_SIZE1 = 0x00,
+     BIT_SIZE2 = 0x01,
+@@ -36,11 +38,15 @@ enum {
+ };
+ 
+ static grid_u8 edge_grid;
++MAP_GRID_REGISTER(edge_grid, u8);
+ static grid_u16 bitfields_grid;
+ 
++MAP_GRID_REGISTER(bitfields_grid, u16);
+ static grid_u8 edge_backup;
++MAP_GRID_REGISTER(edge_backup, u8);
+ static grid_u16 bitfields_backup;
+ 
++MAP_GRID_REGISTER(bitfields_backup, u16);
+ static int edge_for(int x, int y)
+ {
+     return 8 * y + x;
+@@ -299,11 +305,15 @@ void map_property_load_state(buffer *bitfields, buffer *edge)
+ 
+ void map_property_load_state_u8(buffer *bitfields, buffer *edge)
+ {
+-    uint8_t buf[GRID_SIZE * GRID_SIZE];
++    uint8_t *buf = malloc((size_t) map_grid_tiles);
++    if (!buf) {
++        return;
++    }
+     map_grid_load_state_u8(buf, bitfields);
+-    for (int i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
++    for (int i = 0; i < map_grid_tiles; i++) {
+         uint16_t value = (uint16_t) buf[i];
+         bitfields_grid.items[i] = value &= BIT_NO_FUTURE_EARTHQUAKE;
+     }
++    free(buf);
+     map_grid_load_state_u8(edge_grid.items, edge);
+ }
+diff --git a/src/map/random.c b/src/map/random.c
+index fb31d4a..629d71a 100644
+--- a/src/map/random.c
++++ b/src/map/random.c
+@@ -5,6 +5,7 @@
+ 
+ static grid_u8 random;
+ 
++MAP_GRID_REGISTER(random, u8);
+ void map_random_clear(void)
+ {
+     map_grid_clear_u8(random.items);
+@@ -13,14 +14,20 @@ void map_random_clear(void)
+ void map_random_init(void)
+ {
+     int grid_offset = 0;
+-    for (int y = 0; y < GRID_SIZE; y++) {
+-        for (int x = 0; x < GRID_SIZE; x++, grid_offset++) {
++    for (int y = 0; y < map_grid_stride; y++) {
++        for (int x = 0; x < map_grid_stride; x++, grid_offset++) {
+             random_generate_next();
+             random.items[grid_offset] = (uint8_t) random_short();
+         }
+     }
+ }
+ 
++void map_random_seed(int grid_offset)
++{
++    random_generate_next();
++    random.items[grid_offset] = (uint8_t) random_short();
++}
++
+ int map_random_get(int grid_offset)
+ {
+     return random.items[grid_offset];
+diff --git a/src/map/random.h b/src/map/random.h
+index a6ac3a3..7ba364c 100644
+--- a/src/map/random.h
++++ b/src/map/random.h
+@@ -9,6 +9,10 @@ void map_random_init(void);
+ 
+ int map_random_get(int grid_offset);
+ 
++/** Tire une nouvelle valeur aleatoire pour une tuile (zones creees par
++ * agrandissement de la carte). */
++void map_random_seed(int grid_offset);
++
+ int map_random_get_from_buffer(buffer *buf, int grid_offset);
+ 
+ void map_random_save_state(buffer *buf);
+diff --git a/src/map/road_network.c b/src/map/road_network.c
+index ed1cfd1..a32bc72 100644
+--- a/src/map/road_network.c
++++ b/src/map/road_network.c
+@@ -6,20 +6,36 @@
+ #include "map/routing_terrain.h"
+ #include "map/terrain.h"
+ 
++#include <stdlib.h>
+ #include <string.h>
+ 
+-#define MAX_QUEUE 1000
+-
+-static const int ADJACENT_OFFSETS[] = {-GRID_SIZE, 1, GRID_SIZE, -1};
++static const int ADJACENT_OFFSETS[] = {-MAP_GRID_STATIC_STRIDE, 1, MAP_GRID_STATIC_STRIDE, -1};
+ 
+ static grid_u8 network;
+ 
++MAP_GRID_REGISTER(network, u8);
++/* La file doit suivre la taille de la carte : une carte 512x512 compte bien
++ * plus de tuiles de route que les 162x162 d'origine. */
+ static struct {
+-    int items[MAX_QUEUE];
++    int *items;
++    int capacity;
+     int head;
+     int tail;
+ } queue;
+ 
++static void ensure_queue_capacity(void)
++{
++    int capacity = map_grid_tiles + 1;
++    if (queue.items && queue.capacity == capacity) {
++        return;
++    }
++    free(queue.items);
++    queue.items = malloc(sizeof(int) * (size_t) capacity);
++    queue.capacity = queue.items ? capacity : 0;
++    queue.head = 0;
++    queue.tail = 0;
++}
++
+ void map_road_network_clear(void)
+ {
+     map_grid_clear_u8(network.items);
+@@ -27,23 +43,32 @@ void map_road_network_clear(void)
+ 
+ int map_road_network_get(int grid_offset)
+ {
++    ensure_queue_capacity();
++    if (!queue.items) {
++        return 0;
++    }
+     return network.items[grid_offset];
+ }
+ 
+ static int mark_road_network(int grid_offset, uint8_t network_id)
+ {
+-    memset(&queue, 0, sizeof(queue));
++    ensure_queue_capacity();
++    if (!queue.items) {
++        return 0;
++    }
++    queue.head = 0;
++    queue.tail = 0;
+     int guard = 0;
+     int next_offset;
+     int size = 1;
+     do {
+-        if (++guard >= GRID_SIZE * GRID_SIZE) {
++        if (++guard >= map_grid_tiles) {
+             break;
+         }
+         network.items[grid_offset] = network_id;
+         next_offset = -1;
+         for (int i = 0; i < 4; i++) {
+-            int new_offset = grid_offset + ADJACENT_OFFSETS[i];
++            int new_offset = map_grid_add_legacy_offset(grid_offset, ADJACENT_OFFSETS[i]);
+             if (map_routing_citizen_is_passable(new_offset) && !network.items[new_offset]) {
+                 if (
+                     map_routing_citizen_is_road(new_offset) ||
+@@ -56,7 +81,7 @@ static int mark_road_network(int grid_offset, uint8_t network_id)
+                         next_offset = new_offset;
+                     } else {
+                         queue.items[queue.tail++] = new_offset;
+-                        if (queue.tail >= MAX_QUEUE) {
++                        if (queue.tail >= queue.capacity) {
+                             queue.tail = 0;
+                         }
+                     }
+@@ -68,7 +93,7 @@ static int mark_road_network(int grid_offset, uint8_t network_id)
+                 return size;
+             }
+             next_offset = queue.items[queue.head++];
+-            if (queue.head >= MAX_QUEUE) {
++            if (queue.head >= queue.capacity) {
+                 queue.head = 0;
+             }
+         }
+diff --git a/src/map/routing.c b/src/map/routing.c
+index cd13eec..1aaf6db 100644
+--- a/src/map/routing.c
++++ b/src/map/routing.c
+@@ -3,6 +3,7 @@
+ #include "building/building.h"
+ #include "building/connectable.h"
+ #include "core/config.h"
++#include "core/log.h"
+ #include "core/time.h"
+ #include "map/building.h"
+ #include "map/figure.h"
+@@ -14,8 +15,7 @@
+ 
+ #include <stdlib.h>
+ 
+-#define MAX_QUEUE GRID_SIZE * GRID_SIZE
+-#define GUARD 50000
++#define GUARD map_grid_tiles
+ 
+ #define UNTIL_STOP 0
+ #define UNTIL_CONTINUE 1
+@@ -25,7 +25,6 @@ typedef enum {
+     DIRECTIONS_DIAGONALS = 8
+ } max_directions;
+ 
+-static const int ROUTE_OFFSETS[] = { -162, 1, 162, -1, -161, 163, 161, -163 };
+ static const int ROUTE_OFFSETS_X[] = { 0, 1, 0, -1,  1, 1, -1, -1 };
+ static const int ROUTE_OFFSETS_Y[] = { -1, 0, 1,  0, -1, 1,  1, -1 };
+ static const int HIGHWAY_DIRECTIONS[] = {
+@@ -40,6 +39,8 @@ static const int HIGHWAY_DIRECTIONS[] = {
+ };
+ 
+ static map_routing_distance_grid distance;
++MAP_GRID_REGISTER(distance.possible, int16_t);
++MAP_GRID_REGISTER(distance.determined, int16_t);
+ 
+ static struct {
+     int total_routes_calculated;
+@@ -49,21 +50,80 @@ static struct {
+ static struct {
+     int head;
+     int tail;
+-    int items[MAX_QUEUE];
++    int *items;
++    int capacity;
+ } queue;
+ 
++static void ensure_queue(void)
++{
++    if (queue.capacity != map_grid_tiles) {
++        free(queue.items);
++        queue.items = malloc(sizeof(int) * (size_t) map_grid_tiles);
++        if (!queue.items) {
++            log_error("Out of memory allocating routing queue", 0, 0);
++            exit(1);
++        }
++        queue.capacity = map_grid_tiles;
++    }
++}
++
++/* Reinitialiser les grilles de distance sur toute la carte coutait deux memset
++ * de map_grid_tiles elements A CHAQUE calcul de trajet (4 Mo a 1024x1024, des
++ * dizaines de fois par seconde dans une grande ville). On ne retient que les
++ * cases reellement ecrites : le cout devient proportionnel au trajet explore
++ * et non plus a la surface de la carte. */
++static int *touched_offsets;
++static int touched_count;
++static int touched_capacity;
++static int *touched_drag_offsets;
++static int touched_drag_count;
++static int touched_drag_capacity;
++
++static void ensure_touched_storage(int **list, int *capacity)
++{
++    if (*capacity == map_grid_tiles) {
++        return;
++    }
++    free(*list);
++    *list = malloc(sizeof(int) * (size_t) map_grid_tiles);
++    if (!*list) {
++        log_error("Out of memory allocating routing bookkeeping", 0, 0);
++        exit(1);
++    }
++    *capacity = map_grid_tiles;
++}
++
++static inline void touch_distance(int offset)
++{
++    if (touched_count < touched_capacity) {
++        touched_offsets[touched_count++] = offset;
++    }
++}
++
++static inline void touch_drag(int offset)
++{
++    if (touched_drag_count < touched_drag_capacity) {
++        touched_drag_offsets[touched_drag_count++] = offset;
++    }
++}
++
+ static grid_u8 water_drag;
+ 
++MAP_GRID_REGISTER(water_drag, u8);
+ static struct {
+     grid_u8 status;
+     time_millis last_check;
+ } fighting_data;
+ 
++MAP_GRID_REGISTER(fighting_data.status, u8);
++
+ static struct {
+     int through_building_id;
+     int dest_building_id;
+ } state;
+ 
++static int routing_target_is_inside(int x, int y);
++
+ static void reset_fighting_status(void)
+ {
+     time_millis current_time = time_get_millis();
+@@ -80,18 +140,32 @@ const map_routing_distance_grid *map_routing_get_distance_grid(void)
+ 
+ static void clear_data(void)
+ {
++    ensure_queue();
++    ensure_touched_storage(&touched_offsets, &touched_capacity);
++    ensure_touched_storage(&touched_drag_offsets, &touched_drag_capacity);
+     reset_fighting_status();
+-    map_grid_clear_i16(distance.possible.items);
+-    map_grid_clear_i16(distance.determined.items);
++    for (int i = 0; i < touched_count; i++) {
++        int offset = touched_offsets[i];
++        distance.possible.items[offset] = 0;
++        distance.determined.items[offset] = 0;
++    }
++    touched_count = 0;
++    for (int i = 0; i < touched_drag_count; i++) {
++        water_drag.items[touched_drag_offsets[i]] = 0;
++    }
++    touched_drag_count = 0;
+     queue.head = 0;
+     queue.tail = 0;
+ }
+ 
+ static inline void enqueue(int next_offset, int dist)
+ {
++    if (distance.determined.items[next_offset] == 0) {
++        touch_distance(next_offset);
++    }
+     distance.determined.items[next_offset] = dist;
+     queue.items[queue.tail++] = next_offset;
+-    if (queue.tail >= MAX_QUEUE) {
++    if (queue.tail >= queue.capacity) {
+         queue.tail = 0;
+     }
+ }
+@@ -99,7 +173,7 @@ static inline void enqueue(int next_offset, int dist)
+ static inline int queue_pop(void)
+ {
+     int result = queue.items[queue.head];
+-    if (++queue.head >= MAX_QUEUE) {
++    if (++queue.head >= queue.capacity) {
+         queue.head = 0;
+     }
+     return result;
+@@ -174,6 +248,7 @@ static void ordered_enqueue(int next_offset, int current_dist, int remaining_dis
+         }
+     } else {
+         queue.tail++;
++        touch_distance(next_offset);
+     }
+     distance.determined.items[next_offset] = current_dist;
+     distance.possible.items[next_offset] = possible_dist;
+@@ -183,8 +258,14 @@ static void ordered_enqueue(int next_offset, int current_dist, int remaining_dis
+ 
+ static inline int valid_offset(int grid_offset, int possible_dist)
+ {
++    /* La validite doit etre testee AVANT la lecture : sur une carte agrandie
++     * (bordure 0) un voisinage depuis le bord donne un offset negatif, et les
++     * grilles sont allouees sur le tas : la lecture hors limites plantait. */
++    if (!map_grid_is_valid_offset(grid_offset)) {
++        return 0;
++    }
+     int determined = distance.determined.items[grid_offset];
+-    return map_grid_is_valid_offset(grid_offset) && (determined == 0 || possible_dist < determined);
++    return determined == 0 || possible_dist < determined;
+ }
+ 
+ static inline int distance_left(int x, int y)
+@@ -219,7 +300,9 @@ static void route_queue_from_to(int src_x, int src_y, int dst_x, int dst_y, int
+         int y = map_grid_offset_to_y(offset);
+         distance.possible.items[offset] = 1;
+         for (int i = 0; i < num_directions; i++) {
+-            int next_offset = offset + ROUTE_OFFSETS[i];
++            /* map_grid_add_delta refuse de sortir de la carte : sans bordure,
++             * offset + delta ferait passer la recherche a la ligne voisine. */
++            int next_offset = map_grid_add_delta(offset, ROUTE_OFFSETS_X[i], ROUTE_OFFSETS_Y[i]);
+             int remaining_dist = distance_left(x + ROUTE_OFFSETS_X[i], y + ROUTE_OFFSETS_Y[i]);
+             int dist = 2 + distance.determined.items[offset];
+             if (receive_highway_bonus(next_offset, i)) {
+@@ -236,7 +319,6 @@ static void route_queue_all_from(int source, max_directions directions,
+     int (*callback)(int next_offset, int dist, int direction), int is_boat)
+ {
+     clear_data();
+-    map_grid_clear_u8(water_drag.items);
+     enqueue(source, 1);
+     int tiles = 0;
+     while (queue.head != queue.tail) {
+@@ -246,16 +328,18 @@ static void route_queue_all_from(int source, max_directions directions,
+         int offset = queue_pop();
+         int drag = is_boat && terrain_water.items[offset] == WATER_N2_MAP_EDGE ? 4 : 0;
+         if (water_drag.items[offset] < drag) {
++            if (water_drag.items[offset] == 0) {
++                touch_drag(offset);
++            }
+             water_drag.items[offset]++;
+             queue.items[queue.tail++] = offset;
+-            if (queue.tail >= MAX_QUEUE) {
++            if (queue.tail >= queue.capacity) {
+                 queue.tail = 0;
+             }
+         } else {
+             int dist = 1 + distance.determined.items[offset];
+             for (max_directions i = 0; i < directions; i++) {
+-                int route_offset = ROUTE_OFFSETS[i];
+-                int next_offset = offset + route_offset;
++                int next_offset = map_grid_add_delta(offset, ROUTE_OFFSETS_X[i], ROUTE_OFFSETS_Y[i]);
+                 if (valid_offset(next_offset, dist)) {
+                     if (callback(next_offset, dist, i) == UNTIL_STOP) {
+                         break;
+@@ -277,6 +361,10 @@ static int callback_calc_distance(int next_offset, int dist, int direction)
+ void map_routing_calculate_distances(int x, int y)
+ {
+     ++stats.total_routes_calculated;
++    if (!routing_target_is_inside(x, y)) {
++        clear_data();
++        return;
++    }
+     route_queue_all_from(map_grid_offset(x, y), DIRECTIONS_NO_DIAGONALS, callback_calc_distance, 0);
+ }
+ 
+@@ -375,6 +463,9 @@ static int callback_calc_distance_build_road(int next_offset, int dist, int dire
+             break;
+         case CITIZEN_N3_AQUEDUCT:
+             if (!map_can_place_road_under_aqueduct(next_offset)) {
++                if (distance.determined.items[next_offset] == 0) {
++                    touch_distance(next_offset);
++                }
+                 distance.determined.items[next_offset] = -1;
+                 blocked = 1;
+             }
+@@ -590,6 +681,10 @@ int map_routing_citizen_can_travel_over_land(int src_x, int src_y, int dst_x, in
+ {
+     ++stats.total_routes_calculated;
+     routing_ignore_combat = ignore_combat;
++    if (!routing_target_is_inside(src_x, src_y) || !routing_target_is_inside(dst_x, dst_y)) {
++        routing_ignore_combat = 0;
++        return 0;
++    }
+     route_queue_from_to(src_x, src_y, dst_x, dst_y, num_directions, 0, callback_travel_citizen_land);
+     routing_ignore_combat = 0;
+     return distance.determined.items[map_grid_offset(dst_x, dst_y)] != 0;
+@@ -606,6 +701,9 @@ static int callback_travel_citizen_road_garden(int offset, int next_offset, int
+ 
+ int map_routing_citizen_can_travel_over_road_garden(int src_x, int src_y, int dst_x, int dst_y, int num_directions)
+ {
++    if (!routing_target_is_inside(src_x, src_y) || !routing_target_is_inside(dst_x, dst_y)) {
++        return 0;
++    }
+     int dst_offset = map_grid_offset(dst_x, dst_y);
+     if (terrain_land_citizen.items[dst_offset] != CITIZEN_0_ROAD &&
+         terrain_land_citizen.items[dst_offset] != CITIZEN_2_PASSABLE_TERRAIN) {
+@@ -627,6 +725,9 @@ static int callback_travel_citizen_road_garden_highway(int offset, int next_offs
+ 
+ int map_routing_citizen_can_travel_over_road_garden_highway(int src_x, int src_y, int dst_x, int dst_y, int num_directions)
+ {
++    if (!routing_target_is_inside(src_x, src_y) || !routing_target_is_inside(dst_x, dst_y)) {
++        return 0;
++    }
+     int dst_offset = map_grid_offset(dst_x, dst_y);
+     if (terrain_land_citizen.items[dst_offset] < CITIZEN_0_ROAD ||
+         terrain_land_citizen.items[dst_offset] > CITIZEN_2_PASSABLE_TERRAIN) {
+@@ -649,6 +750,9 @@ static int callback_travel_walls(int offset, int next_offset, int direction)
+ int map_routing_can_travel_over_walls(int src_x, int src_y, int dst_x, int dst_y, int num_directions)
+ {
+     ++stats.total_routes_calculated;
++    if (!routing_target_is_inside(src_x, src_y) || !routing_target_is_inside(dst_x, dst_y)) {
++        return 0;
++    }
+     route_queue_from_to(src_x, src_y, dst_x, dst_y, num_directions, 0, callback_travel_walls);
+     return distance.determined.items[map_grid_offset(dst_x, dst_y)] != 0;
+ }
+@@ -669,6 +773,13 @@ static int callback_travel_noncitizen_land_through_building(int offset, int next
+     return 0;
+ }
+ 
++/* Une destination non definie (-1, -1) ou hors carte ne doit jamais servir
++ * d'index de grille : cela provoquerait une lecture hors limites. */
++static int routing_target_is_inside(int x, int y)
++{
++    return x >= 0 && y >= 0 && x < map_grid_width() && y < map_grid_height();
++}
++
+ static int callback_travel_noncitizen_land(int offset, int next_offset, int direction)
+ {
+     if (has_fighting_enemy(next_offset)) {
+@@ -687,6 +798,9 @@ int map_routing_noncitizen_can_travel_over_land(
+ {
+     ++stats.total_routes_calculated;
+     ++stats.enemy_routes_calculated;
++    if (!routing_target_is_inside(src_x, src_y) || !routing_target_is_inside(dst_x, dst_y)) {
++        return 0;
++    }
+     if (only_through_building_id) {
+         state.through_building_id = only_through_building_id;
+         // due to formation offsets, the destination building may not be the same as the "through building" (a.k.a. target building)
+@@ -709,6 +823,9 @@ static int callback_travel_noncitizen_through_everything(int offset, int next_of
+ int map_routing_noncitizen_can_travel_through_everything(int src_x, int src_y, int dst_x, int dst_y, int num_directions)
+ {
+     ++stats.total_routes_calculated;
++    if (!routing_target_is_inside(src_x, src_y) || !routing_target_is_inside(dst_x, dst_y)) {
++        return 0;
++    }
+     route_queue_from_to(src_x, src_y, dst_x, dst_y, num_directions, 0, callback_travel_noncitizen_through_everything);
+     return distance.determined.items[map_grid_offset(dst_x, dst_y)] != 0;
+ }
+@@ -727,7 +844,7 @@ void map_routing_block(int x, int y, int size)
+ 
+ int map_routing_distance(int grid_offset)
+ {
+-    return distance.determined.items[grid_offset];
++    return map_grid_is_valid_offset(grid_offset) ? distance.determined.items[grid_offset] : 0;
+ }
+ 
+ void map_routing_save_state(buffer *buf)
+diff --git a/src/map/routing_data.c b/src/map/routing_data.c
+index 64313d6..e85fda3 100644
+--- a/src/map/routing_data.c
++++ b/src/map/routing_data.c
+@@ -1,6 +1,11 @@
+ #include "routing_data.h"
+ 
+ grid_i8 terrain_land_citizen;
++MAP_GRID_REGISTER(terrain_land_citizen, i8);
+ grid_i8 terrain_land_noncitizen;
++MAP_GRID_REGISTER(terrain_land_noncitizen, i8);
+ grid_i8 terrain_water;
++MAP_GRID_REGISTER(terrain_water, i8);
+ grid_i8 terrain_walls;
++
++MAP_GRID_REGISTER(terrain_walls, i8);
+\ No newline at end of file
+diff --git a/src/map/routing_terrain.c b/src/map/routing_terrain.c
+index 701d470..e73ab70 100644
+--- a/src/map/routing_terrain.c
++++ b/src/map/routing_terrain.c
+@@ -247,10 +247,12 @@ static void map_routing_update_land_noncitizen(void)
+ 
+ static int is_surrounded_by_water(int grid_offset)
+ {
+-    return map_terrain_is(grid_offset + map_grid_delta(0, -1), TERRAIN_WATER) &&
+-        map_terrain_is(grid_offset + map_grid_delta(-1, 0), TERRAIN_WATER) &&
+-        map_terrain_is(grid_offset + map_grid_delta(1, 0), TERRAIN_WATER) &&
+-        map_terrain_is(grid_offset + map_grid_delta(0, 1), TERRAIN_WATER);
++    /* map_grid_add_delta renvoie -1 en dehors de la carte : sans bordure,
++     * une addition directe retomberait sur la ligne voisine. */
++    return map_terrain_is(map_grid_add_delta(grid_offset, 0, -1), TERRAIN_WATER) &&
++        map_terrain_is(map_grid_add_delta(grid_offset, -1, 0), TERRAIN_WATER) &&
++        map_terrain_is(map_grid_add_delta(grid_offset, 1, 0), TERRAIN_WATER) &&
++        map_terrain_is(map_grid_add_delta(grid_offset, 0, 1), TERRAIN_WATER);
+ }
+ 
+ void map_routing_update_water(void)
+diff --git a/src/map/soldier_strength.c b/src/map/soldier_strength.c
+index 85320f2..7049ccb 100644
+--- a/src/map/soldier_strength.c
++++ b/src/map/soldier_strength.c
+@@ -7,6 +7,7 @@
+ 
+ static grid_u8 strength;
+ 
++MAP_GRID_REGISTER(strength, u8);
+ void map_soldier_strength_clear(void)
+ {
+     map_grid_clear_u8(strength.items);
+diff --git a/src/map/sprite.c b/src/map/sprite.c
+index 95f0c86..e4b8597 100644
+--- a/src/map/sprite.c
++++ b/src/map/sprite.c
+@@ -3,8 +3,10 @@
+ #include "map/grid.h"
+ 
+ static grid_u8 sprite;
++MAP_GRID_REGISTER(sprite, u8);
+ static grid_u8 sprite_backup;
+ 
++MAP_GRID_REGISTER(sprite_backup, u8);
+ int map_sprite_animation_at(int grid_offset)
+ {
+     return sprite.items[grid_offset];
+diff --git a/src/map/terrain.c b/src/map/terrain.c
+index fd6758f..3370c92 100644
+--- a/src/map/terrain.c
++++ b/src/map/terrain.c
+@@ -14,9 +14,11 @@
+ #include <string.h>
+ 
+ static grid_u32 terrain_grid;
++MAP_GRID_REGISTER(terrain_grid, u32);
+ static grid_u32 terrain_grid_backup;
+ 
+ 
++MAP_GRID_REGISTER(terrain_grid_backup, u32);
+ const terrain_flags_array *map_terrain_to_array(int grid_offset)
+ {
+     static const char *names[TERRAIN_NUM_FLAGS] = {
+@@ -74,7 +76,7 @@ int map_terrain_is_superset(int grid_offset, unsigned int terrain_sum)
+ 
+ int map_terrain_get(int grid_offset)
+ {
+-    return terrain_grid.items[grid_offset];
++    return map_grid_is_valid_offset(grid_offset) ? terrain_grid.items[grid_offset] : 0;
+ }
+ 
+ int map_terrain_get_from_buffer_16(buffer *buf, int grid_offset)
+@@ -91,23 +93,31 @@ int map_terrain_get_from_buffer_32(buffer *buf, int grid_offset)
+ 
+ void map_terrain_set(int grid_offset, int terrain)
+ {
+-    terrain_grid.items[grid_offset] = terrain;
++    if (map_grid_is_valid_offset(grid_offset)) {
++        terrain_grid.items[grid_offset] = terrain;
++    }
+ }
+ 
+ void map_terrain_add(int grid_offset, int terrain)
+ {
+-    terrain_grid.items[grid_offset] |= terrain;
++    if (map_grid_is_valid_offset(grid_offset)) {
++        terrain_grid.items[grid_offset] |= terrain;
++    }
+ }
+ 
+ void map_terrain_remove(int grid_offset, int terrain)
+ {
+-    terrain_grid.items[grid_offset] &= ~terrain;
++    if (map_grid_is_valid_offset(grid_offset)) {
++        terrain_grid.items[grid_offset] &= ~terrain;
++    }
+ }
+ 
+ void map_terrain_remove_with_backup(int grid_offset, int terrain)
+ {
+-    terrain_grid.items[grid_offset] &= ~terrain;
+-    terrain_grid_backup.items[grid_offset] &= ~terrain;
++    if (map_grid_is_valid_offset(grid_offset)) {
++        terrain_grid.items[grid_offset] &= ~terrain;
++        terrain_grid_backup.items[grid_offset] &= ~terrain;
++    }
+ }
+ 
+ void map_terrain_add_with_radius(int x, int y, int size, int radius, int terrain)
+@@ -484,13 +494,13 @@ void map_terrain_init_outside_map(void)
+ {
+     int map_width, map_height;
+     map_grid_size(&map_width, &map_height);
+-    int y_start = (GRID_SIZE - map_height) / 2;
+-    int x_start = (GRID_SIZE - map_width) / 2;
+-    for (int y = 0; y < GRID_SIZE; y++) {
++    int y_start = (map_grid_stride - map_height) / 2;
++    int x_start = (map_grid_stride - map_width) / 2;
++    for (int y = 0; y < map_grid_stride; y++) {
+         int y_outside_map = y < y_start || y >= y_start + map_height;
+-        for (int x = 0; x < GRID_SIZE; x++) {
++        for (int x = 0; x < map_grid_stride; x++) {
+             if (y_outside_map || x < x_start || x >= x_start + map_width) {
+-                terrain_grid.items[x + GRID_SIZE * y] = TERRAIN_MAP_EDGE;
++                terrain_grid.items[x + map_grid_stride * y] = TERRAIN_MAP_EDGE;
+             }
+         }
+     }
+@@ -508,13 +518,13 @@ void map_terrain_save_state_legacy(buffer *buf)
+ 
+ static void determine_original_trees(buffer *images, int legacy_buffer)
+ {
+-    for (int y = 0; y < GRID_SIZE; y++) {
+-        for (int x = 0; x < GRID_SIZE; x++) {
+-            if (terrain_grid.items[x + GRID_SIZE * y] & TERRAIN_TREE &&
+-                !(terrain_grid.items[x + GRID_SIZE * y] & TERRAIN_WATER)) {
+-                terrain_grid.items[x + GRID_SIZE * y] |= TERRAIN_ORIGINALLY_TREE;
++    for (int y = 0; y < map_grid_stride; y++) {
++        for (int x = 0; x < map_grid_stride; x++) {
++            if (terrain_grid.items[x + map_grid_stride * y] & TERRAIN_TREE &&
++                !(terrain_grid.items[x + map_grid_stride * y] & TERRAIN_WATER)) {
++                terrain_grid.items[x + map_grid_stride * y] |= TERRAIN_ORIGINALLY_TREE;
+                 if (images) {
+-                    buffer_set(images, (x + GRID_SIZE * y) * (legacy_buffer ? 2 : 4));
++                    buffer_set(images, (x + map_grid_stride * y) * (legacy_buffer ? 2 : 4));
+                     int image_id = legacy_buffer ? buffer_read_u16(images) : buffer_read_u32(images);
+                     int image_tree_group = image_group(GROUP_TERRAIN_TREE);
+                     int ring;
+@@ -529,7 +539,7 @@ static void determine_original_trees(buffer *images, int legacy_buffer)
+                     }
+                     int start = map_ring_start(1, ring);
+                     int end = map_ring_end(1, ring);
+-                    int base_offset = x + GRID_SIZE * y;
++                    int base_offset = x + map_grid_stride * y;
+                     for (int i = start; i < end; i++) {
+                         int current_offset = base_offset + map_ring_tile(i)->grid_offset;
+                         if (map_grid_is_valid_offset(current_offset) &&
+@@ -601,8 +611,8 @@ int map_bridge_find_start_and_direction_legacy(int grid_offset, int *axis, int *
+ 
+ void map_terrain_migrate_old_bridges(void)
+ {
+-    for (int y = 0; y < GRID_SIZE; y++) {
+-        for (int x = 0; x < GRID_SIZE; x++) {
++    for (int y = 0; y < map_grid_stride; y++) {
++        for (int x = 0; x < map_grid_stride; x++) {
+             int grid_offset = map_grid_offset(x, y);
+             if (!map_grid_is_valid_offset(grid_offset)) {
+                 continue;
+@@ -639,8 +649,8 @@ void map_terrain_migrate_old_bridges(void)
+ 
+ void map_terrain_migrate_shared_buildings(void)
+ {
+-    for (int y = 0; y < GRID_SIZE; y++) {
+-        for (int x = 0; x < GRID_SIZE; x++) {
++    for (int y = 0; y < map_grid_stride; y++) {
++        for (int x = 0; x < map_grid_stride; x++) {
+             int grid_offset = map_grid_offset(x, y);
+             if (!map_grid_is_valid_offset(grid_offset)) {
+                 continue;
+diff --git a/src/map/tiles.c b/src/map/tiles.c
+index 7d14d9d..e61375d 100644
+--- a/src/map/tiles.c
++++ b/src/map/tiles.c
+@@ -29,7 +29,7 @@
+ #include "scenario/property.h"
+ 
+ 
+-#define OFFSET(x,y) (x + GRID_SIZE * y)
++#define OFFSET(x,y) (x + MAP_GRID_STATIC_STRIDE * y)
+ 
+ #define FORBIDDEN_TERRAIN_MEADOW (TERRAIN_AQUEDUCT | TERRAIN_ELEVATION | TERRAIN_ACCESS_RAMP |\
+             TERRAIN_RUBBLE | TERRAIN_ROAD | TERRAIN_BUILDING | TERRAIN_GARDEN | TERRAIN_WALL)
+@@ -43,7 +43,7 @@
+ #define MAX_OUTSKIRTS_FADE_DISTANCE 6
+ 
+ static int aqueduct_include_construction = 0;
+-static int highway_top_tile_offsets[4] = { 0, -GRID_SIZE, -1, -GRID_SIZE - 1 };
++static int highway_top_tile_offsets[4] = { 0, -MAP_GRID_STATIC_STRIDE, -1, -MAP_GRID_STATIC_STRIDE - 1 };
+ static int elevation_recalculate_trees = 0;
+ 
+ static int is_clear(int x, int y, int size, int disallowed_terrain, int terrain_exception,
+@@ -99,7 +99,7 @@ static void foreach_region_tile(int x_min, int y_min, int x_max, int y_max,
+             callback(xx, yy, grid_offset);
+             ++grid_offset;
+         }
+-        grid_offset += GRID_SIZE - (x_max - x_min + 1);
++        grid_offset += map_grid_stride - (x_max - x_min + 1);
+     }
+ }
+ 
+@@ -995,7 +995,7 @@ int map_tiles_clear_highway(int grid_offset, int measure_only)
+     int highway_terrain = TERRAIN_HIGHWAY_TOP_LEFT;
+     for (int i = 0; i < 4; i++) {
+         if (terrain & highway_terrain) {
+-            int highway_top_tile = grid_offset + highway_top_tile_offsets[i];
++            int highway_top_tile = map_grid_add_legacy_offset(grid_offset, highway_top_tile_offsets[i]);
+             items_cleared += clear_highway_from_top(highway_top_tile, measure_only);
+         }
+         highway_terrain <<= 1;
+@@ -1462,7 +1462,7 @@ static int get_access_ramp_image_offset(int x, int y)
+         int right_tiles = 0;
+         int height = -1;
+         for (int i = 0; i < 6; i++) {
+-            int grid_offset = base_offset + offsets[dir][i];
++            int grid_offset = map_grid_add_legacy_offset(base_offset, offsets[dir][i]);
+             if (i < 2) { // 2nd row
+                 if (map_terrain_is(grid_offset, TERRAIN_ELEVATION)) {
+                     right_tiles++;
+diff --git a/src/map/water.c b/src/map/water.c
+index f2d73a5..a7ee860 100644
+--- a/src/map/water.c
++++ b/src/map/water.c
+@@ -12,7 +12,7 @@
+ #include "map/property.h"
+ #include "map/terrain.h"
+ 
+-#define OFFSET(x,y) ((x) + GRID_SIZE * (y))
++#define OFFSET(x,y) ((x) + MAP_GRID_STATIC_STRIDE * (y))
+ 
+ void map_water_add_building(int building_id, int x, int y, int size)
+ {
+@@ -111,15 +111,15 @@ int map_water_determine_orientation(int x, int y, int size, int adjust_xy,
+             for (column = 0; column < row; column++) {
+ 
+                 int should_be_water = water_line_y[dir] == row || water_line_x[dir] == column;
+-                ok_tiles += should_be_water == map_terrain_is(base_offset + OFFSET(column, row), TERRAIN_WATER);
++                ok_tiles += should_be_water == map_terrain_is(map_grid_add_legacy_offset(base_offset, OFFSET(column, row)), TERRAIN_WATER);
+ 
+                 should_be_water = water_line_y[dir] == column || water_line_x[dir] == row;
+-                ok_tiles += should_be_water == map_terrain_is(base_offset + OFFSET(row, column), TERRAIN_WATER);
++                ok_tiles += should_be_water == map_terrain_is(map_grid_add_legacy_offset(base_offset, OFFSET(row, column)), TERRAIN_WATER);
+ 
+                 index += 2;
+             }
+             int should_be_water = water_line_y[dir] == row || water_line_x[dir] == row;
+-            ok_tiles += should_be_water == map_terrain_is(base_offset + OFFSET(row, row), TERRAIN_WATER);
++            ok_tiles += should_be_water == map_terrain_is(map_grid_add_legacy_offset(base_offset, OFFSET(row, row)), TERRAIN_WATER);
+ 
+             index++;
+             row++;
+@@ -153,10 +153,8 @@ int map_water_determine_orientation(int x, int y, int size, int adjust_xy,
+         while (index < square) {
+             for (column = 0; column < row; column++) {
+                 int is_blocked[2];
+-                is_blocked[0] = is_blocked_tile(unadjusted_base_offset +
+-                    OFFSET(*x_offset * steps[orientation].x, *y_offset * steps[orientation].y));
+-                is_blocked[1] = is_blocked_tile(unadjusted_base_offset +
+-                    OFFSET(*y_offset * steps[orientation].x, *x_offset * steps[orientation].y));
++                is_blocked[0] = is_blocked_tile(map_grid_add_legacy_offset(base_offset, OFFSET(*x_offset * steps[orientation].x, *y_offset * steps[orientation].y)));
++                is_blocked[1] = is_blocked_tile(map_grid_add_legacy_offset(base_offset, OFFSET(*y_offset * steps[orientation].x, *x_offset * steps[orientation].y)));
+ 
+                 blocked_tiles += is_blocked[0] + is_blocked[1];
+                 if (blocked) {
+@@ -165,8 +163,7 @@ int map_water_determine_orientation(int x, int y, int size, int adjust_xy,
+                 }
+                 index += 2;
+             }
+-            int is_blocked = is_blocked_tile(unadjusted_base_offset +
+-                OFFSET(row * steps[orientation].x, row * steps[orientation].y));
++            int is_blocked = is_blocked_tile(map_grid_add_legacy_offset(base_offset, OFFSET(row * steps[orientation].x, row * steps[orientation].y)));
+             blocked_tiles += is_blocked;
+ 
+             if (blocked) {
+@@ -236,7 +233,7 @@ int map_water_has_water_in_front(int x, int y, int adjust_xy, const waterside_ti
+     int index = 0;
+     for (int outer = 0; outer < MAP_WATER_WATERSIDE_ROWS_NEEDED; outer++) {
+         for (int inner = 0; inner < loop->inner_length; inner++) {
+-            if (!map_terrain_is(base_offset + OFFSET(dx, dy), TERRAIN_WATER)) {
++            if (!map_terrain_is(map_grid_add_legacy_offset(base_offset, OFFSET(dx, dy)), TERRAIN_WATER)) {
+                 water_ok = 0;
+                 if (land_tiles) {
+                     land_tiles[index] = 1;
+diff --git a/src/map/water_supply.c b/src/map/water_supply.c
+index 9443681..1487560 100644
+--- a/src/map/water_supply.c
++++ b/src/map/water_supply.c
+@@ -18,25 +18,41 @@
+ #include "map/tiles.h"
+ #include "scenario/property.h"
+ 
++#include <stdlib.h>
+ #include <string.h>
+ 
+-#define OFFSET(x,y) (x + GRID_SIZE * y)
++#define OFFSET(x,y) (x + MAP_GRID_STATIC_STRIDE * y)
+ 
+-#define MAX_QUEUE 1000
+ #define RESERVOIR_RADIUS 10
+ #define WELL_RADIUS 2
+ #define LATRINES_RADIUS 3
+ #define FOUNTAIN_RADIUS 4
+ 
+-static const int ADJACENT_OFFSETS[] = { -GRID_SIZE, 1, GRID_SIZE, -1 };
++static const int ADJACENT_OFFSETS[] = { -MAP_GRID_STATIC_STRIDE, 1, MAP_GRID_STATIC_STRIDE, -1 };
+ static const int CONNECTOR_OFFSETS[] = { OFFSET(1,-1), OFFSET(3,1), OFFSET(1,3), OFFSET(-1,1) };
+ 
++/* La file d'attente doit suivre la taille de la carte : une carte 512x512
++ * compte bien plus de tuiles d'aqueduc que les 162x162 d'origine. */
+ static struct {
+-    int items[MAX_QUEUE];
++    int *items;
++    int capacity;
+     int head;
+     int tail;
+ } queue;
+ 
++static void ensure_queue_capacity(void)
++{
++    int capacity = map_grid_tiles + 1;
++    if (queue.items && queue.capacity == capacity) {
++        return;
++    }
++    free(queue.items);
++    queue.items = malloc(sizeof(int) * (size_t) capacity);
++    queue.capacity = queue.items ? capacity : 0;
++    queue.head = 0;
++    queue.tail = 0;
++}
++
+ static void mark_well_access(int well_id, int radius)
+ {
+     building *well = building_get(well_id);
+@@ -139,12 +155,17 @@ static void fill_aqueducts_from_offset(int grid_offset)
+         }
+         return;
+     }
+-    memset(&queue, 0, sizeof(queue));
++    ensure_queue_capacity();
++    if (!queue.items) {
++        return;
++    }
++    queue.head = 0;
++    queue.tail = 0;
+     int guard = 0;
+     int next_offset;
+ 
+     do {
+-        if (++guard >= GRID_SIZE * GRID_SIZE) {
++        if (++guard >= map_grid_tiles) {
+             break;
+         }
+         map_aqueduct_set_water_access(grid_offset, 1);
+@@ -157,7 +178,7 @@ static void fill_aqueducts_from_offset(int grid_offset)
+         }
+         next_offset = -1;
+         for (int i = 0; i < 4; i++) {
+-            int new_offset = grid_offset + ADJACENT_OFFSETS[i];
++            int new_offset = map_grid_add_legacy_offset(grid_offset, ADJACENT_OFFSETS[i]);
+             building *b = building_get(map_building_at(new_offset));
+             if (b->id && b->type == BUILDING_RESERVOIR) {
+                 if (!b->has_water_access && is_valid_reservoir_connection(new_offset)) {
+@@ -169,7 +190,7 @@ static void fill_aqueducts_from_offset(int grid_offset)
+                         next_offset = new_offset;
+                     } else {
+                         queue.items[queue.tail++] = new_offset;
+-                        if (queue.tail >= MAX_QUEUE) {
++                        if (queue.tail >= queue.capacity) {
+                             queue.tail = 0;
+                         }
+                     }
+@@ -181,7 +202,7 @@ static void fill_aqueducts_from_offset(int grid_offset)
+                 return;
+             }
+             next_offset = queue.items[queue.head++];
+-            if (queue.head >= MAX_QUEUE) {
++            if (queue.head >= queue.capacity) {
+                 queue.head = 0;
+             }
+         }
+@@ -216,7 +237,7 @@ void map_water_supply_update_reservoir_fountain(void)
+                 b->has_water_access = 1;
+                 changed = 1;
+                 for (int d = 0; d < 4; d++) {
+-                    fill_aqueducts_from_offset(b->grid_offset + CONNECTOR_OFFSETS[d]);
++                    fill_aqueducts_from_offset(map_grid_add_legacy_offset(b->grid_offset, CONNECTOR_OFFSETS[d]));
+                 }
+             }
+         }
+@@ -300,7 +321,7 @@ void map_water_supply_update_reservoir_fountain(void)
+ int map_water_supply_has_aqueduct_access(int grid_offset)
+ {
+     for (int i = 0; i < 4; i++) {
+-        int new_offset = grid_offset + CONNECTOR_OFFSETS[i];
++        int new_offset = map_grid_add_legacy_offset(grid_offset, CONNECTOR_OFFSETS[i]);
+         if (!map_grid_is_valid_offset(new_offset)) {
+             continue;
+         }
+diff --git a/src/scenario/earthquake.c b/src/scenario/earthquake.c
+index d5b72c0..695f8e7 100644
+--- a/src/scenario/earthquake.c
++++ b/src/scenario/earthquake.c
+@@ -168,7 +168,13 @@ static int custom_earthquake_advance_next_tile(void)
+ static int custom_earthquake_advance_random_tiles(void)
+ {
+     // 1. Collect all tiles that can be affected by the earthquake
+-    map_point candidates[GRID_SIZE * GRID_SIZE];
++    /* La table des candidats doit suivre la taille de la carte : une carte
++     * 512x512 compte bien plus de tuiles que les 162x162 d'origine. */
++    int tile_count = map_data.width * map_data.height;
++    map_point *candidates = malloc(sizeof(map_point) * (size_t) tile_count);
++    if (!candidates) {
++        return 0;
++    }
+     int count = 0;
+ 
+     for (int y = 0; y < map_data.height; y++) {
+@@ -181,8 +187,10 @@ static int custom_earthquake_advance_random_tiles(void)
+         }
+     }
+ 
+-    if (count == 0)
++    if (count == 0) {
++        free(candidates);
+         return 0; // No more tiles to process
++    }
+ 
+     // 2. Select random tiles to process
+     int tiles_to_process = (count < MAX_TILES_PER_TICK) ? count : MAX_TILES_PER_TICK;
+@@ -201,6 +209,7 @@ static int custom_earthquake_advance_random_tiles(void)
+         count--;
+     }
+ 
++    free(candidates);
+     return 1; // At least one tile processed
+ }
+ 
+diff --git a/src/scenario/editor.c b/src/scenario/editor.c
+index c74f556..5f77c13 100644
+--- a/src/scenario/editor.c
++++ b/src/scenario/editor.c
+@@ -25,7 +25,9 @@ static const struct {
+     {80, 80},
+     {100, 100},
+     {120, 120},
+-    {160, 160}
++    {160, 160},
++    {256, 256},
++    {512, 512}
+ };
+ 
+ static int is_saved;
+@@ -57,8 +59,14 @@ void scenario_editor_create(int map_size)
+ 
+     scenario.map.width = MAP_SIZES[map_size].width;
+     scenario.map.height = MAP_SIZES[map_size].height;
+-    scenario.map.grid_border_size = GRID_SIZE - scenario.map.width;
+-    scenario.map.grid_start = (GRID_SIZE - scenario.map.height) / 2 * GRID_SIZE + (GRID_SIZE - scenario.map.width) / 2;
++    /* Le pas de grille doit au moins valoir 162 pour rester compatible avec
++     * les cartes historiques, et au moins la dimension de la carte. */
++    int stride = scenario.map.width > MAP_GRID_LEGACY_SIZE ? scenario.map.width : MAP_GRID_LEGACY_SIZE;
++    if (scenario.map.height > stride) {
++        stride = scenario.map.height;
++    }
++    scenario.map.grid_border_size = stride - scenario.map.width;
++    scenario.map.grid_start = (stride - scenario.map.height) / 2 * stride + (stride - scenario.map.width) / 2;
+ 
+     string_copy(lang_get_string(44, 37), scenario.brief_description, MAX_BRIEF_DESCRIPTION);
+     string_copy(lang_get_string(44, 38), scenario.briefing, MAX_BRIEFING);
+diff --git a/src/scenario/map.c b/src/scenario/map.c
+index f7a860f..8dd824d 100644
+--- a/src/scenario/map.c
++++ b/src/scenario/map.c
+@@ -3,6 +3,7 @@
+ #include "map/routing.h"
+ 
+ #include "core/calc.h"
++#include "core/config.h"
+ #include "map/grid.h"
+ #include "scenario/data.h"
+ 
+@@ -12,6 +13,33 @@ void scenario_map_init(void)
+                   scenario.map.grid_start, scenario.map.grid_border_size);
+ }
+ 
++/* Tailles proposees par l'option "taille de la carte" des parametres.
++ * L'index dans cette table est stocke dans la configuration
++ * (CONFIG_MAP_EXPANDED_SIZE). 162 correspond a la carte d'origine. */
++const int map_expand_size_options[MAP_EXPAND_SIZE_COUNT] = {
++    162, 192, 256, 320, 384, 512, 640, 768, 1024
++};
++
++int scenario_map_expand(void)
++{
++    int index = config_get(CONFIG_MAP_EXPANDED_SIZE);
++    if (index < 0) {
++        index = 0;
++    }
++    if (index >= MAP_EXPAND_SIZE_COUNT) {
++        index = MAP_EXPAND_SIZE_COUNT - 1;
++    }
++    int size = map_expand_size_options[index];
++    if (!map_grid_expand(size)) {
++        return 0;
++    }
++    scenario.map.width = size;
++    scenario.map.height = size;
++    scenario.map.grid_border_size = 0;
++    scenario.map.grid_start = 0;
++    return 1;
++}
++
+ int scenario_map_size(void)
+ {
+     return scenario.map.width;
+diff --git a/src/scenario/map.h b/src/scenario/map.h
+index 3a7f596..082b89b 100644
+--- a/src/scenario/map.h
++++ b/src/scenario/map.h
+@@ -5,8 +5,20 @@
+ 
+ void scenario_map_init(void);
+ 
++/**
++ * Etend la carte du scenario a MAP_GRID_EXPANDED_SIZE, contenu centre.
++ * @return 1 si la carte a ete etendue, 0 sinon
++ */
++int scenario_map_expand(void);
++
+ int scenario_map_size(void);
+ 
++/** Nombre de tailles proposees par l'option "taille de la carte". */
++#define MAP_EXPAND_SIZE_COUNT 9
++
++/** Tailles disponibles (en tuiles de cote), de la carte d'origine a 2048. */
++extern const int map_expand_size_options[MAP_EXPAND_SIZE_COUNT];
++
+ void scenario_map_init_entry_exit(void);
+ 
+ map_point scenario_map_entry(void);
+diff --git a/src/scenario/scenario.c b/src/scenario/scenario.c
+index f0cbf77..7e1e983 100644
+--- a/src/scenario/scenario.c
++++ b/src/scenario/scenario.c
+@@ -701,12 +701,19 @@ void scenario_objectives_from_buffer(buffer *buf, int version, scenario_win_crit
+ 
+ void scenario_map_data_from_buffer(buffer *buf, int *width, int *height, int *grid_start, int *grid_border_size, int version)
+ {
++    /* Lecture a un offset absolu : la position du buffer doit etre restauree,
++     * sinon les lectures sequentielles qui suivent (scenario_load_state) lisent
++     * au mauvais endroit. */
++    size_t position = buf->index;
++    int overflow = buf->overflow;
+     calculate_buffer_offsets(version);
+     buffer_set(buf, (int) buffer_offsets.map_size);
+     *width = buffer_read_i32(buf);
+     *height = buffer_read_i32(buf);
+     *grid_start = buffer_read_i32(buf);
+     *grid_border_size = buffer_read_i32(buf);
++    buffer_set(buf, position);
++    buf->overflow = overflow;
+ }
+ 
+ void scenario_settings_init(void)
+diff --git a/src/translation/english.c b/src/translation/english.c
+index 5902366..662016d 100644
+--- a/src/translation/english.c
++++ b/src/translation/english.c
+@@ -2308,6 +2308,7 @@ static translation_string all_strings[] = {
+     {TR_EDITOR_TOOL_OUTSKIRTS_REMOVE, "Remove outskits"},
+     {TR_EDITOR_SELECT_LAND, "Select land"},
+     {TR_CONFIG_UI_SCROLL_CAMERA_UNLOCKED, "Expand camera bounds"},
++    {TR_CONFIG_MAP_EXPANDED_SIZE, "Map size when a mission starts"},
+     {TR_UI_LEDGER_ONLY_CURRENT_YEAR, "You only started your governorship this year!"},
+     {TR_UI_TRADE_YEAR_PREVIOUS, "Previous year"},
+     {TR_UI_TRADE_YEAR_NEXT, "Next year"},
+diff --git a/src/translation/french.c b/src/translation/french.c
+index 67fb10e..2ca7c0c 100644
+--- a/src/translation/french.c
++++ b/src/translation/french.c
+@@ -2308,6 +2308,7 @@ static translation_string all_strings[] = {
+     {TR_EDITOR_TOOL_OUTSKIRTS_REMOVE, "Suppr. faubourgs"},
+     {TR_EDITOR_SELECT_LAND, "Sélect. terrain"},
+     {TR_CONFIG_UI_SCROLL_CAMERA_UNLOCKED, "Étendre les limites de la caméra"},
++    {TR_CONFIG_MAP_EXPANDED_SIZE, "Taille de la carte au démarrage d'une mission"},
+     {TR_UI_LEDGER_ONLY_CURRENT_YEAR, "Vous ne gouvernez que depuis cette année !"},
+     {TR_UI_TRADE_YEAR_PREVIOUS, "Année précédente"},
+     {TR_UI_TRADE_YEAR_NEXT, "Année suivante"},
+diff --git a/src/translation/translation.h b/src/translation/translation.h
+index 4cbf271..a51b3b8 100644
+--- a/src/translation/translation.h
++++ b/src/translation/translation.h
+@@ -2393,6 +2393,7 @@ typedef enum {
+     TR_TERRAIN_BEACH,
+     TR_TERRAIN_BEACH_DESC,
+     TR_CHEAT_FILL_MARKETS,
++    TR_CONFIG_MAP_EXPANDED_SIZE,
+     TRANSLATION_MAX_KEY
+ } translation_key;
+ 
+diff --git a/src/widget/city/building_ghost.c b/src/widget/city/building_ghost.c
+index 3266d4f..d0dc582 100644
+--- a/src/widget/city/building_ghost.c
++++ b/src/widget/city/building_ghost.c
+@@ -54,7 +54,7 @@
+ // Note: If we ever end up creating larger buildings than 7 * 7, we should update this
+ #define MAX_TILES (7 * 7)
+ 
+-#define GRID_OFFSET(x, y) ((x) + GRID_SIZE * (y))
++#define GRID_OFFSET(x, y) ((x) + MAP_GRID_STATIC_STRIDE * (y))
+ #define X_VIEW_OFFSET(x, y) (((x) - (y)) * 30)
+ #define Y_VIEW_OFFSET(x, y) (((x) + (y)) * 15)
+ 
+@@ -145,7 +145,7 @@ static inline int view_offset_y(int index)
+ 
+ static inline int tile_grid_offset(int orientation, int index)
+ {
+-    return GRID_OFFSET(data.offsets[orientation][index].x, data.offsets[orientation][index].y);
++    return map_grid_delta(data.offsets[orientation][index].x, data.offsets[orientation][index].y);
+ }
+ 
+ static inline int forbidden_terrain_mask(int base)
+@@ -613,7 +613,7 @@ static void draw_single_reservoir(int grid_offset, int x, int y, color_t color,
+         int num_tiles = 9;
+         int orientation_index = city_view_orientation() / 2;
+ 
+-        grid_offset += GRID_OFFSET(-1, -1);
++        grid_offset = map_grid_add_delta(grid_offset, -1, -1);
+ 
+         for (int i = 0; i < num_tiles; i++) {
+             int tile_offset = grid_offset + tile_grid_offset(orientation_index, i);
+@@ -627,7 +627,7 @@ static void draw_single_reservoir(int grid_offset, int x, int y, color_t color,
+ 
+ static void draw_first_reservoir_range(int x, int y, int grid_offset)
+ {
+-    if (data.reservoir_range.save_offsets) {
++    if (data.reservoir_range.save_offsets && data.reservoir_range.total < RESERVOIR_RANGE_MAX_TILES) {
+         data.reservoir_range.offsets[data.reservoir_range.total] = grid_offset;
+         data.reservoir_range.total++;
+     }
+@@ -723,9 +723,9 @@ static void draw_draggable_reservoir(const map_tile *tile, int x, int y)
+             }
+             if (!draw_later) {
+                 if (config_get(CONFIG_UI_SHOW_WATER_STRUCTURE_RANGE)) {
+-                    city_view_foreach_tile_in_range(offset + RESERVOIR_GRID_OFFSETS[orientation_index], 3,
++                    city_view_foreach_tile_in_range(map_grid_add_legacy_offset(offset, RESERVOIR_GRID_OFFSETS[orientation_index]), 3,
+                         map_water_supply_reservoir_radius(), draw_first_reservoir_range);
+-                    city_view_foreach_tile_in_range(tile->grid_offset + RESERVOIR_GRID_OFFSETS[orientation_index], 3,
++                    city_view_foreach_tile_in_range(map_grid_add_legacy_offset(tile->grid_offset, RESERVOIR_GRID_OFFSETS[orientation_index]), 3,
+                         map_water_supply_reservoir_radius(), draw_second_reservoir_range);
+                 }
+                 draw_single_reservoir(0, x_start, y_start, color, has_water, 1);
+@@ -735,7 +735,7 @@ static void draw_draggable_reservoir(const map_tile *tile, int x, int y)
+     if (!drawing_two_reservoirs) {
+         data.reservoir_range.last_grid_offset = -1;
+         data.reservoir_range.total = 0;
+-        int grid_offset = tile->grid_offset + RESERVOIR_GRID_OFFSETS[orientation_index];
++        int grid_offset = map_grid_add_legacy_offset(tile->grid_offset, RESERVOIR_GRID_OFFSETS[orientation_index]);
+         int reservoir_forbidden_mask = forbidden_terrain_mask(TERRAIN_NOT_CLEAR);
+         for (int i = 0; i < 9; i++) {
+             int tile_offset = grid_offset + tile_grid_offset(orientation_index, i);
+@@ -773,10 +773,10 @@ static void draw_draggable_reservoir(const map_tile *tile, int x, int y)
+     y -= 30;
+     if (config_get(CONFIG_UI_SHOW_WATER_STRUCTURE_RANGE) && (!building_construction_in_progress() || draw_later)) {
+         if (draw_later) {
+-            city_view_foreach_tile_in_range(offset + RESERVOIR_GRID_OFFSETS[orientation_index], 3,
++            city_view_foreach_tile_in_range(map_grid_add_legacy_offset(offset, RESERVOIR_GRID_OFFSETS[orientation_index]), 3,
+                 map_water_supply_reservoir_radius(), draw_first_reservoir_range);
+         }
+-        city_view_foreach_tile_in_range(tile->grid_offset + RESERVOIR_GRID_OFFSETS[orientation_index], 3,
++        city_view_foreach_tile_in_range(map_grid_add_legacy_offset(tile->grid_offset, RESERVOIR_GRID_OFFSETS[orientation_index]), 3,
+             map_water_supply_reservoir_radius(), draw_second_reservoir_range);
+     }
+     draw_single_reservoir(tile->grid_offset, x, y, color, has_water, drawing_two_reservoirs);
+@@ -1066,8 +1066,8 @@ static void draw_fort(const map_tile *tile, int x, int y)
+     int num_tiles_ground = building_size_ground * building_size_ground;
+ 
+     int grid_offset_fort = tile->grid_offset;
+-    int grid_offset_ground = grid_offset_fort +
+-        FORT_GROUND_GRID_OFFSETS[building_rotation_get_rotation()][city_view_orientation() / 2];
++    int grid_offset_ground = map_grid_add_legacy_offset(
++        grid_offset_fort, FORT_GROUND_GRID_OFFSETS[building_rotation_get_rotation()][city_view_orientation() / 2]);
+     int blocked_tiles_fort[9];
+     int blocked_tiles_ground[16];
+ 
+@@ -1486,12 +1486,12 @@ static void draw_partial_grid(int grid_offset, int x, int y, building_type type)
+     if (building_is_farm(type) || type == BUILDING_DRAGGABLE_RESERVOIR || type == BUILDING_WAREHOUSE) {
+         size = 3;
+         if (type == BUILDING_DRAGGABLE_RESERVOIR) {
+-            grid_offset += RESERVOIR_GRID_OFFSETS[orientation_index];
++            grid_offset = map_grid_add_legacy_offset(grid_offset, RESERVOIR_GRID_OFFSETS[orientation_index]);
+         }
+     }
+     draw_grid_around_building(grid_offset, size, orientation_index, x, y);
+     if (building_is_fort(type)) {
+-        grid_offset += FORT_GROUND_GRID_OFFSETS[building_rotation_get_rotation()][orientation_index];
++        grid_offset = map_grid_add_legacy_offset(grid_offset, FORT_GROUND_GRID_OFFSETS[building_rotation_get_rotation()][orientation_index]);
+         int ground_index = building_rotation_get_building_orientation(building_rotation_get_rotation()) / 2;
+         int x_ground = x + FORT_GROUND_X_VIEW_OFFSETS[ground_index];
+         int y_ground = y + FORT_GROUND_Y_VIEW_OFFSETS[ground_index];
+diff --git a/src/widget/city/draw.c b/src/widget/city/draw.c
+index 429be2f..87649aa 100644
+--- a/src/widget/city/draw.c
++++ b/src/widget/city/draw.c
+@@ -52,7 +52,7 @@
+ #include "widget/city/highway.h"
+ #include "widget/city/overlay/overlay.h"
+ 
+-#define OFFSET(x,y) (x + GRID_SIZE * y)
++#define OFFSET(x,y) (x + MAP_GRID_STATIC_STRIDE * y)
+ 
+ #define WAREHOUSE_FLAG_FRAMES 9
+ #define SELECTED_BUILDING_COLOR_MASK COLOR_MASK_SKY_BLUE
+@@ -152,7 +152,7 @@ static int has_adjacent_deletion(int grid_offset)
+     int total_adjacent_offsets = size * 2 + 1;
+     const int *adjacent_offset = ADJACENT_OFFSETS[size - 2][city_view_orientation() / 2];
+     for (int i = 0; i < total_adjacent_offsets; ++i) {
+-        int offset = grid_offset + adjacent_offset[i];
++        int offset = map_grid_add_legacy_offset(grid_offset, adjacent_offset[i]);
+         if (map_property_is_deleted(offset) ||
+             draw_building_as_deleted(building_get(map_building_at(offset)), offset)) {
+             return 1;
+@@ -1359,7 +1359,7 @@ static void update_clouds(void)
+         clouds_pause();
+     }
+     city_view_get_camera_in_pixels(&camera_x, &camera_y);
+-    clouds_draw(camera_x, camera_y, GRID_SIZE * 60, GRID_SIZE * 30, draw_context.scale);
++    clouds_draw(camera_x, camera_y, map_grid_stride * 60, map_grid_stride * 30, draw_context.scale);
+ }
+ 
+ void city_draw(int selected_figure_id, pixel_coordinate *figure_coord, const map_tile *tile, unsigned int roamer_preview_building_id)
+diff --git a/src/widget/city/highway.c b/src/widget/city/highway.c
+index 13d631c..f8bbcb1 100644
+--- a/src/widget/city/highway.c
++++ b/src/widget/city/highway.c
+@@ -11,19 +11,21 @@
+ #include "map/terrain.h"
+ #include "map/tiles.h"
+ 
+-static int highway_barrier_direction_offsets[4] = { 1, -GRID_SIZE, -1, GRID_SIZE };
++static int highway_barrier_direction_offsets[4] = { 1, -MAP_GRID_STATIC_STRIDE, -1, MAP_GRID_STATIC_STRIDE };
+ 
+ static int has_adjacent_road(int adjacent_grid_offset, int direction_index)
+ {
+-    int right_direction = highway_barrier_direction_offsets[(direction_index + 3) % 4];
+-    int left_direction = highway_barrier_direction_offsets[(direction_index + 1) % 4];
+-    int left_has_road = map_terrain_is(adjacent_grid_offset + left_direction, TERRAIN_ROAD);
+-    int right_has_road = map_terrain_is(adjacent_grid_offset + right_direction, TERRAIN_ROAD);
++    int right_legacy = highway_barrier_direction_offsets[(direction_index + 3) % 4];
++    int left_legacy = highway_barrier_direction_offsets[(direction_index + 1) % 4];
++    int left_offset = map_grid_add_legacy_offset(adjacent_grid_offset, left_legacy);
++    int right_offset = map_grid_add_legacy_offset(adjacent_grid_offset, right_legacy);
++    int left_has_road = map_terrain_is(left_offset, TERRAIN_ROAD);
++    int right_has_road = map_terrain_is(right_offset, TERRAIN_ROAD);
+     if (left_has_road && right_has_road) {
+         return 1;
+-    } else if (left_has_road && map_terrain_is(adjacent_grid_offset + left_direction * 2, TERRAIN_ROAD)) {
++    } else if (left_has_road && map_terrain_is(map_grid_add_legacy_offset(left_offset, left_legacy), TERRAIN_ROAD)) {
+         return 1;
+-    } else if (right_has_road && map_terrain_is(adjacent_grid_offset + right_direction * 2, TERRAIN_ROAD)) {
++    } else if (right_has_road && map_terrain_is(map_grid_add_legacy_offset(right_offset, right_legacy), TERRAIN_ROAD)) {
+         return 1;
+     }
+     return 0;
+@@ -51,15 +53,13 @@ static int is_highway_access(int grid_offset, int direction_index)
+ 
+ static void draw_barrier_image(int grid_offset, int direction_index, int x, int y, float scale, color_t color_mask)
+ {
+-    int direction = highway_barrier_direction_offsets[direction_index];
+-
+-    int direction_offset = grid_offset + direction;
++    int direction_offset = map_grid_add_legacy_offset(grid_offset, highway_barrier_direction_offsets[direction_index]);
+     if (is_highway_access(direction_offset, direction_index)) {
+         return;
+     }
+ 
+     int last_direction_index = (direction_index + 3) % 4;
+-    int last_direction_offset = grid_offset + highway_barrier_direction_offsets[last_direction_index];
++    int last_direction_offset = map_grid_add_legacy_offset(grid_offset, highway_barrier_direction_offsets[last_direction_index]);
+     // last barrier was a corner and will handle the rendering
+     if (!is_highway_access(last_direction_offset, last_direction_index)) {
+         return;
+@@ -67,7 +67,7 @@ static void draw_barrier_image(int grid_offset, int direction_index, int x, int
+ 
+     int barrier_offset = (direction_index + city_view_orientation() / 2) % 4;
+     int next_direction_index = (direction_index + 1) % 4;
+-    int next_direction_offset = grid_offset + highway_barrier_direction_offsets[next_direction_index];
++    int next_direction_offset = map_grid_add_legacy_offset(grid_offset, highway_barrier_direction_offsets[next_direction_index]);
+     // is this a corner?
+     if (!is_highway_access(next_direction_offset, next_direction_index)) {
+         // increment by 4 to get the corner image
+diff --git a/src/widget/map_editor.c b/src/widget/map_editor.c
+index 03d1286..5784856 100644
+--- a/src/widget/map_editor.c
++++ b/src/widget/map_editor.c
+@@ -66,7 +66,33 @@ static struct {
+     float scale;
+ } draw_context;
+ 
+-int event_tiles[GRID_SIZE * GRID_SIZE][MAX_EVENTS_PER_TILE];
++/* Les tuiles d'evenement sont indexees par offset de grille : la table doit
++ * suivre la taille reelle de la carte, sinon elle deborde sur une carte
++ * agrandie (512x512, 1024x1024). */
++int (*event_tiles)[MAX_EVENTS_PER_TILE];
++static int event_tiles_capacity;
++
++static void ensure_event_tiles(void)
++{
++    if (event_tiles && event_tiles_capacity == map_grid_tiles) {
++        return;
++    }
++    free(event_tiles);
++    event_tiles = malloc(sizeof(*event_tiles) * (size_t) map_grid_tiles);
++    event_tiles_capacity = event_tiles ? map_grid_tiles : 0;
++    if (event_tiles) {
++        memset(event_tiles, -1, sizeof(*event_tiles) * (size_t) event_tiles_capacity);
++    }
++}
++
++static int *event_tiles_at(int grid_offset)
++{
++    static int empty[MAX_EVENTS_PER_TILE] = { -1 };
++    if (!event_tiles || grid_offset < 0 || grid_offset >= event_tiles_capacity) {
++        return empty;
++    }
++    return event_tiles[grid_offset];
++}
+ 
+ static void init_draw_context(void)
+ {
+@@ -83,7 +109,10 @@ static void init_draw_context(void)
+ 
+ void widget_map_editor_clear_draw_context_event_tiles(void)
+ {
+-    memset(event_tiles, -1, sizeof(event_tiles));
++    ensure_event_tiles();
++    if (event_tiles) {
++        memset(event_tiles, -1, sizeof(*event_tiles) * (size_t) event_tiles_capacity);
++    }
+ }
+ 
+ void widget_map_editor_custom_earthquake_request_refresh(void)
+@@ -93,6 +122,10 @@ void widget_map_editor_custom_earthquake_request_refresh(void)
+ 
+ int widget_map_editor_add_draw_context_event_tile(int grid_offset, int event_id)
+ {
++    ensure_event_tiles();
++    if (!event_tiles || grid_offset < 0 || grid_offset >= event_tiles_capacity) {
++        return 0;
++    }
+     for (int i = 0; i < MAX_EVENTS_PER_TILE; i++) {
+         if (event_tiles[grid_offset][i] == event_id) {
+             return 1; // already exists
+@@ -139,8 +172,8 @@ static void draw_footprint(int x, int y, int grid_offset)
+         }
+         map_image_set(grid_offset, image_id);
+     }
+-    if (event_tiles[grid_offset][0] != -1) {
+-        color_mask = complex_button_basic_colors((event_tiles[grid_offset][0] % 10) + 1);
++    if (event_tiles_at(grid_offset)[0] != -1) {
++        color_mask = complex_button_basic_colors((event_tiles_at(grid_offset)[0] % 10) + 1);
+     }
+     if (map_property_is_outskirts(grid_offset)) {
+         int distance_to_non_outskirts = map_tiles_find_nearest_non_outskirts(map_x, map_y);
+@@ -174,7 +207,16 @@ static void draw_custom_earthquake(int x, int y, int grid_offset)
+         return;
+     }
+     if (map_property_is_future_earthquake(grid_offset) && editor_is_active() && !map_terrain_is(grid_offset, TERRAIN_IMPASSABLE_EARTHQUAKE)) {
+-        static terrain_image images[GRID_SIZE * GRID_SIZE] = { 0 };
++        static terrain_image *images;
++        static int images_capacity;
++        if (images_capacity != map_grid_tiles) {
++            free(images);
++            images = calloc((size_t) map_grid_tiles, sizeof(terrain_image));
++            images_capacity = images ? map_grid_tiles : 0;
++        }
++        if (!images || grid_offset < 0 || grid_offset >= images_capacity) {
++            return;
++        }
+         if (data.custom_earthquake_refresh || !images[grid_offset].is_valid) {
+             images[grid_offset] = *map_image_context_get_future_earthquake(grid_offset);
+         }
+@@ -198,8 +240,8 @@ static void draw_top(int x, int y, int grid_offset)
+     int map_y = map_grid_offset_to_y(grid_offset);
+     int image_id = map_image_at(grid_offset);
+     color_t color_mask = 0;
+-    if (event_tiles[grid_offset][0] != -1) {
+-        color_mask = complex_button_basic_colors((event_tiles[grid_offset][0] % 10) + 1);
++    if (event_tiles_at(grid_offset)[0] != -1) {
++        color_mask = complex_button_basic_colors((event_tiles_at(grid_offset)[0] % 10) + 1);
+     }
+     if (map_property_is_outskirts(grid_offset)) {
+         int distance_to_non_outskirts = map_tiles_find_nearest_non_outskirts(map_x, map_y);
+@@ -489,12 +531,12 @@ void widget_map_editor_get_tooltip(tooltip_context *c)
+     if (tile->grid_offset) {
+         static uint8_t tooltip_text[128]; // increased a bit for safety
+         int offset = tile->grid_offset;
+-        if (event_tiles[offset][0] == -1) {
++        if (event_tiles_at(offset)[0] == -1) {
+             return; // No events
+         }
+         int len = snprintf((char *) tooltip_text, sizeof(tooltip_text), "Event IDs: ");
+         for (int i = 0; i < MAX_EVENTS_PER_TILE; i++) {
+-            int event_id = event_tiles[offset][i];
++            int event_id = event_tiles_at(offset)[i];
+             if (event_id == -1)
+                 break;
+             int written = snprintf((char *) tooltip_text + len, sizeof(tooltip_text) - len, "%s%d", " ", event_id);
+@@ -567,7 +609,7 @@ void widget_map_editor_handle_input(const mouse *m, const hotkeys *h)
+             editor_tool_update_use(tile);
+         } else if (m->right.went_up && !editor_tool_is_in_use() && !has_scrolled) {
+             int offset = tile->grid_offset;
+-            int event_id = event_tiles[offset][0];
++            int event_id = event_tiles_at(offset)[0];
+             if (event_id == -1) {
+                 return; // No events
+             }
+diff --git a/src/widget/minimap.c b/src/widget/minimap.c
+index 8f0a678..0f04b8c 100644
+--- a/src/widget/minimap.c
++++ b/src/widget/minimap.c
+@@ -176,6 +176,7 @@ static struct {
+     } minimap;
+     struct {
+         int stride;
++        int height;
+         color_t *buffer;
+     } cache;
+     const minimap_functions *functions;
+@@ -308,6 +309,12 @@ static int has_figure_color(figure *f)
+ 
+ static inline void draw_pixel(int x, int y, color_t color)
+ {
++    /* Le trace deborde volontairement de quelques tuiles autour de la carte ;
++     * sur une grande carte cela sortait du tampon alloue. */
++    if (!data.cache.buffer || x < 0 || y < 0 ||
++        x >= data.cache.stride || y >= data.cache.height) {
++        return;
++    }
+     data.cache.buffer[y * data.cache.stride + x] = color;
+ }
+ 
+@@ -511,12 +518,15 @@ static void prepare_minimap_cache(void)
+         !graphics_renderer()->has_custom_image(CUSTOM_IMAGE_MINIMAP)) {
+         data.minimap.width = data.functions->map.width();
+         data.minimap.height = data.functions->map.height() * 2;
+-        data.minimap.x = (VIEW_X_MAX - data.minimap.width) / 2;
+-        data.minimap.y = (VIEW_Y_MAX - data.minimap.height) / 2;
++        /* La carte est dessinee depuis l'origine de la vue. Un centrage base
++         * sur la taille historique decalait la minimap des grandes cartes. */
++        data.minimap.x = 0;
++        data.minimap.y = 0;
+ 
+         graphics_renderer()->create_custom_image(CUSTOM_IMAGE_MINIMAP, data.minimap.width * 2, data.minimap.height, 0);
+     }
+     data.cache.buffer = graphics_renderer()->get_custom_image_buffer(CUSTOM_IMAGE_MINIMAP, &data.cache.stride);
++    data.cache.height = data.minimap.height;
+ }
+ 
+ static void clear_minimap(void)
+diff --git a/src/widget/top_menu_editor.c b/src/widget/top_menu_editor.c
+index ee70b3f..2a3345b 100644
+--- a/src/widget/top_menu_editor.c
++++ b/src/widget/top_menu_editor.c
+@@ -227,7 +227,7 @@ int widget_top_menu_editor_handle_input(const mouse *m, const hotkeys *h)
+ static void map_size_selected(int size)
+ {
+     clear_state();
+-    if (size >= 0 && size <= 5) {
++    if (size >= 0 && size <= 7) {
+         game_file_editor_create_scenario(size);
+         window_editor_map_show();
+     } else {
+@@ -243,7 +243,16 @@ void menu_file_new_map(int centered)
+         x += 325;
+         y += 200;
+     }
+-    window_select_list_show(x, y, 0, 33, 7, map_size_selected);
++    /* 6 tailles historiques (libellees par la traduction), deux tailles
++     * etendues et l'entree d'annulation. */
++    static const uint8_t *labels[9];
++    for (int i = 0; i < 6; i++) {
++        labels[i] = lang_get_string(0, 33 + i);
++    }
++    labels[6] = (const uint8_t *) "256 x 256";
++    labels[7] = (const uint8_t *) "512 x 512";
++    labels[8] = lang_get_string(0, 39);
++    window_select_list_show_text(x, y, 0, labels, 9, map_size_selected);
+ }
+ 
+ static void menu_file_load_map(int param)
+diff --git a/src/window/building_info.c b/src/window/building_info.c
+index de00dce..e220fc3 100644
+--- a/src/window/building_info.c
++++ b/src/window/building_info.c
+@@ -67,7 +67,7 @@ enum {
+     HEIGHT_13_15_BLOCKS = 13,
+ };
+ 
+-#define OFFSET(x,y) (x + GRID_SIZE * y)
++#define OFFSET(x,y) (x + MAP_GRID_STATIC_STRIDE * y)
+ #define SMALL_ICON_SIDE 24
+ 
+ static void button_help(int param1, int param2);
+@@ -477,7 +477,7 @@ static void init(int grid_offset)
+         OFFSET(-1,-1), OFFSET(1,-1), OFFSET(-1,1), OFFSET(1,1)
+     };
+     for (int i = 0; i < 9 && context.figure.count < 7; i++) {
+-        int figure_id = map_figure_at(grid_offset + FIGURE_OFFSETS[i]);
++        int figure_id = map_figure_at(map_grid_add_legacy_offset(grid_offset, FIGURE_OFFSETS[i]));
+         while (figure_id > 0 && context.figure.count < 7) {
+             figure *f = figure_get(figure_id);
+             if (f->state != FIGURE_STATE_DEAD &&
+diff --git a/src/window/config.c b/src/window/config.c
+index 9678378..447316f 100644
+--- a/src/window/config.c
++++ b/src/window/config.c
+@@ -24,6 +24,7 @@
+ #include "graphics/text.h"
+ #include "graphics/weather.h"
+ #include "graphics/window.h"
++#include "scenario/map.h"
+ #include "sound/city.h"
+ #include "sound/device.h"
+ #include "sound/effect.h"
+@@ -108,7 +109,8 @@ enum {
+     RANGE_SANDSTORM_SPEED,
+     RANGE_SANDSTORM_SIZE,
+     RANGE_SNOWFLAKE_SIZE,
+-    RANGE_WEATHER_DURATION
++    RANGE_WEATHER_DURATION,
++    RANGE_MAP_SIZE
+ };
+ 
+ enum {
+@@ -163,6 +165,7 @@ static const uint8_t *display_text_user_directory(void);
+ static const uint8_t *display_text_player_name(void);
+ static const uint8_t *display_text_game_speed(void);
+ static const uint8_t *display_text_resolution(void);
++static const uint8_t *display_text_map_size(void);
+ static const uint8_t *display_text_display_scale(void);
+ static const uint8_t *display_text_cursor_scale(void);
+ static const uint8_t *display_text_master_volume(void);
+@@ -216,6 +219,9 @@ static config_widget page_general[] = {
+     {TYPE_NUMERICAL_RANGE, RANGE_MAX_AUTOSAVE_SLOTS, 0, display_text_autosave_slots, 0, 1, ITEM_BASE_H, 2},
+     {TYPE_CHECKBOX, CONFIG_GP_CH_YEARLY_AUTOSAVE, TR_BUTTON_YEARLY_AUTOSAVE_ON, NULL, 0, 1, ITEM_BASE_H, CHECKBOX_MARGIN},
+ 
++    {TYPE_NUMERICAL_DESC, RANGE_MAP_SIZE, TR_CONFIG_MAP_EXPANDED_SIZE, NULL, 0, 1, ITEM_BASE_H, 10},
++    {TYPE_NUMERICAL_RANGE, RANGE_MAP_SIZE, 0, display_text_map_size, 0, 1, ITEM_BASE_H, 2},
++
+     {TYPE_HEADER, 0, TR_CONFIG_VIDEO, NULL, 0, 1, ITEM_BASE_H, 14},
+     {TYPE_CHECKBOX, CONFIG_ORIGINAL_FULLSCREEN, TR_CONFIG_FULLSCREEN, NULL, 0, 1, ITEM_BASE_H, CHECKBOX_MARGIN},
+     {TYPE_NUMERICAL_DESC, RANGE_RESOLUTION, TR_CONFIG_WINDOWED_RESOLUTION, NULL, 0, 1, ITEM_BASE_H, 10},
+@@ -544,6 +550,7 @@ static numerical_range_widget ranges[] = {
+     { 82, 14,   0,   4,  1, 0},   //  sandstorm particle size (index 0-4)
+     { 82, 14,   0,   4,  1, 0},   //  snowflake size (index 0-4)
+     { 82, 14,   0,   2,  1, 0},   //  weather max duration (0=short,1=regular,2=long)
++    { 98, 27,   0,   MAP_EXPAND_SIZE_COUNT - 1,  1, 0},   //  taille de la carte
+ };
+ 
+ //  Bottom buttons & page tabs
+@@ -1023,6 +1030,23 @@ static const uint8_t *display_text_resolution(void)
+     return data.display_text;
+ }
+ 
++static const uint8_t *display_text_map_size(void)
++{
++    int index = data.config_values[CONFIG_MAP_EXPANDED_SIZE].new_value;
++    if (index < 0) {
++        index = 0;
++    }
++    if (index >= MAP_EXPAND_SIZE_COUNT) {
++        index = MAP_EXPAND_SIZE_COUNT - 1;
++    }
++    int size = map_expand_size_options[index];
++    uint8_t *str = data.display_text;
++    str += string_from_int(str, size, 0);
++    str = string_copy(string_from_ascii(" x "), str, 5);
++    string_from_int(str, size, 0);
++    return data.display_text;
++}
++
+ static const uint8_t *display_text_difficulty(void)
+ {
+     return lang_get_string(153, data.config_values[CONFIG_ORIGINAL_DIFFICULTY].new_value + 1);
+@@ -1140,6 +1164,7 @@ static void set_range_values(void)
+     ranges[RANGE_DIFFICULTY].value = &data.config_values[CONFIG_ORIGINAL_DIFFICULTY].new_value;
+     ranges[RANGE_MAX_GRAND_TEMPLES].value = &data.config_values[CONFIG_GP_CH_MAX_GRAND_TEMPLES].new_value;
+     ranges[RANGE_MAX_AUTOSAVE_SLOTS].value = &data.config_values[CONFIG_GP_CH_MAX_AUTOSAVE_SLOTS].new_value;
++    ranges[RANGE_MAP_SIZE].value = &data.config_values[CONFIG_MAP_EXPANDED_SIZE].new_value;
+     ranges[RANGE_DEFAULT_GAME_SPEED].value = &data.config_values[CONFIG_GP_CH_DEFAULT_GAME_SPEED].new_value;
+     ranges[RANGE_RAIN_INTENSITY].value = &data.config_values[CONFIG_WT_RAIN_INTENSITY].new_value;
+     ranges[RANGE_RAIN_SPEED].value = &data.config_values[CONFIG_WT_RAIN_SPEED].new_value;
+diff --git a/src/window/message_dialog.c b/src/window/message_dialog.c
+index d739ced..e676f08 100644
+--- a/src/window/message_dialog.c
++++ b/src/window/message_dialog.c
+@@ -14,6 +14,7 @@
+ #include "game/settings.h"
+ #include "widget/complex_button.h"
+ #include "graphics/graphics.h"
++#include "map/grid.h"
+ #include "graphics/image.h"
+ #include "graphics/image_button.h"
+ #include "graphics/lang_text.h"
+@@ -946,7 +947,7 @@ static void button_go_to_problem(int param1, int param2)
+             grid_offset = invasion_grid_offset;
+         }
+     }
+-    if (grid_offset > 0 && grid_offset < 26244) {
++    if (grid_offset > 0 && map_grid_is_valid_offset(grid_offset)) {
+         city_view_go_to_grid_offset(grid_offset);
+     }
+     window_city_show();
